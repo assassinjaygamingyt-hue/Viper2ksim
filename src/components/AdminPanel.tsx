@@ -105,7 +105,30 @@ export default function AdminPanel({
     historicalBio: ''
   });
 
+  // Synchronize historyForm when selectedHistoryTeamId or teamHistories prop updates reactively from the server
+  React.useEffect(() => {
+    if (selectedHistoryTeamId) {
+      const existing = teamHistories[selectedHistoryTeamId];
+      if (existing) {
+        setHistoryForm({
+          established: existing.established || '',
+          championships: Array.isArray(existing.championships) ? existing.championships.join(', ') : '',
+          legendaryPlayers: Array.isArray(existing.legendaryPlayers) ? existing.legendaryPlayers.join(', ') : '',
+          historicalBio: existing.historicalBio || ''
+        });
+      } else {
+        setHistoryForm({
+          established: '1980',
+          championships: '',
+          legendaryPlayers: '',
+          historicalBio: ''
+        });
+      }
+    }
+  }, [selectedHistoryTeamId, teamHistories]);
+
   // Mod User creation states
+  const [editingModId, setEditingModId] = useState<string | null>(null);
   const [modForm, setModForm] = useState({
     username: '',
     password: '',
@@ -297,6 +320,13 @@ export default function AdminPanel({
     if (!selectedRosterTeamId) {
       return showAlert('Please select a Team to add the player to.', 'error');
     }
+
+    // Validate 15 players per team limit client-side
+    const currentRosterSize = players.filter(p => p.teamId === selectedRosterTeamId).length;
+    if (currentRosterSize >= 15) {
+      return showAlert('Franchise roster is full. A team can have at most 15 players.', 'error');
+    }
+
     if (!newPlayer.name) {
       return showAlert('Player name is required!', 'error');
     }
@@ -319,7 +349,10 @@ export default function AdminPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(playerData)
       });
-      if (!resp.ok) throw new Error('Failed to add player.');
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to add player.');
+      }
       showAlert(`Player "${newPlayer.name}" signed to franchise.`);
       setNewPlayer({
         name: '',
@@ -351,13 +384,24 @@ export default function AdminPanel({
   };
 
   const saveEditedPlayer = async (pId: string) => {
+    const oldPlayer = players.find(p => p.id === pId);
+    if (oldPlayer && editingPlayerData.teamId !== oldPlayer.teamId) {
+      const targetRosterSize = players.filter(p => p.teamId === editingPlayerData.teamId).length;
+      if (targetRosterSize >= 15) {
+        return showAlert('Target franchise roster is full. A team can have at most 15 players.', 'error');
+      }
+    }
+
     try {
       const resp = await fetch(`/api/players/${pId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingPlayerData)
       });
-      if (!resp.ok) throw new Error('Failed to update player stats.');
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to update player stats.');
+      }
       showAlert(`Roster statistics updated successfully for ${editingPlayerData.name}.`);
       setEditingPlayerId(null);
       onRefreshDB();
@@ -413,7 +457,7 @@ export default function AdminPanel({
         body: JSON.stringify(dataToSend)
       });
       if (!resp.ok) throw new Error('Failed to save standings.');
-      showAlert('Standings table and team quotients updated successfully.');
+      showAlert('Standings table and team records updated successfully.');
       onRefreshDB();
     } catch (err: any) {
       showAlert(err.message, 'error');
@@ -830,10 +874,10 @@ export default function AdminPanel({
     const existing = teamHistories[teamId];
     if (existing) {
       setHistoryForm({
-        established: existing.established,
-        championships: existing.championships.join(', '),
-        legendaryPlayers: existing.legendaryPlayers.join(', '),
-        historicalBio: existing.historicalBio
+        established: existing.established || '',
+        championships: Array.isArray(existing.championships) ? existing.championships.join(', ') : '',
+        legendaryPlayers: Array.isArray(existing.legendaryPlayers) ? existing.legendaryPlayers.join(', ') : '',
+        historicalBio: existing.historicalBio || ''
       });
     } else {
       setHistoryForm({
@@ -901,12 +945,59 @@ export default function AdminPanel({
     }
   };
 
+  const handleEditModUser = (u: ModUser) => {
+    setEditingModId(u.id || null);
+    setModForm({
+      username: u.username,
+      password: u.password || '',
+      editHistory: u.permissions?.editHistory || false,
+      editDrafts: u.permissions?.editDrafts || false,
+      editRosters: u.permissions?.editRosters || false
+    });
+  };
+
+  const handleUpdateModUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingModId) return;
+    if (!modForm.username || !modForm.password) return showAlert('Missing username or password!', 'error');
+    try {
+      const payload = {
+        username: modForm.username,
+        password: modForm.password,
+        permissions: {
+          editHistory: modForm.editHistory,
+          editDrafts: modForm.editDrafts,
+          editRosters: modForm.editRosters
+        }
+      };
+      const resp = await fetch(`/api/users/${editingModId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Failed to update moderator account.');
+      }
+      showAlert(`Moderator account "${modForm.username}" updated successfully!`);
+      setEditingModId(null);
+      setModForm({ username: '', password: '', editHistory: false, editDrafts: false, editRosters: false });
+      onRefreshDB();
+    } catch (err: any) {
+      showAlert(err.message, 'error');
+    }
+  };
+
   const handleDeleteModUser = async (id: string) => {
     if (!window.confirm('Delete this moderator account?')) return;
     try {
       const resp = await fetch(`/api/users/${id}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error('Failed to delete moderator.');
       showAlert('Moderator user deleted.');
+      if (editingModId === id) {
+        setEditingModId(null);
+        setModForm({ username: '', password: '', editHistory: false, editDrafts: false, editRosters: false });
+      }
       onRefreshDB();
     } catch (err: any) {
       showAlert(err.message, 'error');
@@ -1331,28 +1422,16 @@ export default function AdminPanel({
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Overall OVR (50-99)</label>
-                      <input
-                        type="number"
-                        min={50}
-                        max={99}
-                        value={newPlayer.rating}
-                        onChange={(e) => setNewPlayer({ ...newPlayer, rating: Number(e.target.value) })}
-                        className="w-full bg-gray-900 border border-gray-800 rounded p-2 text-white outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Contract Ledger</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. $10.5M / 3 Yrs"
-                        value={newPlayer.contract}
-                        onChange={(e) => setNewPlayer({ ...newPlayer, contract: e.target.value })}
-                        className="w-full bg-gray-900 border border-gray-800 rounded p-2 text-white outline-none"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Overall OVR (50-99)</label>
+                    <input
+                      type="number"
+                      min={50}
+                      max={99}
+                      value={newPlayer.rating}
+                      onChange={(e) => setNewPlayer({ ...newPlayer, rating: Number(e.target.value) })}
+                      className="w-full bg-gray-900 border border-gray-800 rounded p-2 text-white outline-none"
+                    />
                   </div>
 
                   <div className="bg-gray-950 p-3 rounded-lg border border-gray-855 space-y-3">
@@ -1397,7 +1476,6 @@ export default function AdminPanel({
                     <tr className="border-b border-gray-800 text-gray-400 uppercase">
                       <th className="py-2.5">Athlete</th>
                       <th>Rating</th>
-                      <th>Contract</th>
                       <th className="text-center">Actions</th>
                     </tr>
                   </thead>
@@ -1480,18 +1558,7 @@ export default function AdminPanel({
                                 </span>
                               )}
                             </td>
-                            <td>
-                              {isEditing ? (
-                                <input
-                                  type="text"
-                                  value={editingPlayerData.contract}
-                                  onChange={(e) => setEditingPlayerData({ ...editingPlayerData, contract: e.target.value })}
-                                  className="bg-gray-900 border border-gray-700 text-white text-[10px] p-0.5 rounded"
-                                />
-                              ) : (
-                                <span className="font-mono text-gray-400 font-medium">{p.contract}</span>
-                              )}
-                            </td>
+
                             <td className="text-center">
                               {isEditing ? (
                                 <div className="flex gap-1 justify-center">
@@ -2090,6 +2157,692 @@ export default function AdminPanel({
                     Deploy Accolade Award
                   </button>
                 </form>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* FINALS CHAMPIONS TAB (CHAMPIONSHIPS) */}
+        {/* =================================================================== */}
+        {activeTab === 'championships' && (
+          <div className="space-y-10 font-sans">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              {/* Left Column: Log/Edit Form */}
+              <div className="lg:col-span-5 bg-gray-950/50 p-6 rounded-2xl border border-gray-800">
+                <div className="mb-5">
+                  <h3 className="text-base font-bold text-gray-100 flex items-center gap-2">
+                    <Trophy className="w-5 h-5 text-amber-500 animate-pulse" />
+                    {editingChampId ? 'Edit Finals Ledger' : 'Configure New Championship'}
+                  </h3>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    {editingChampId 
+                      ? 'Updating an entry reflects instantly on Champions list and Team Legacy history modules.'
+                      : 'Record the victor, runner-up, series score, and Finals MVP highlights for a season.'}
+                  </p>
+                </div>
+
+                {!canEditHistory && (
+                  <div className="mb-4 p-3 bg-amber-950/40 border border-amber-800/40 text-amber-300 rounded-lg text-xs leading-normal">
+                    ⚠️ <strong>View-Only:</strong> You do not possess <em>editHistory</em> permissions. Only Administrators or designated History Moderators can save changes.
+                  </div>
+                )}
+
+                <form onSubmit={editingChampId ? handleUpdateChampionship : handleAddChampionship} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Season / Year</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. 2024 or 2023-24"
+                      value={champForm.year}
+                      onChange={(e) => setChampForm({ ...champForm, year: e.target.value })}
+                      disabled={!canEditHistory}
+                      className="w-full bg-gray-900 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Champion Franchise</label>
+                      <select
+                        required
+                        value={champForm.championKey}
+                        onChange={(e) => {
+                          const teamId = e.target.value;
+                          const teamObj = teams.find(t => t.id === teamId);
+                          setChampForm(prev => ({
+                            ...prev,
+                            championKey: teamId,
+                            champion: teamObj ? teamObj.name : ''
+                          }));
+                        }}
+                        disabled={!canEditHistory}
+                        className="w-full bg-gray-900 border border-gray-800 rounded-lg p-2.5 text-white outline-none cursor-pointer disabled:opacity-50"
+                      >
+                        <option value="">-- Choose Champion --</option>
+                        {teams.map(t => (
+                          <option key={t.id} value={t.id}>{t.name} ({t.abbrev})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Runner-up Franchise</label>
+                      <select
+                        required
+                        value={champForm.runnerUpKey}
+                        onChange={(e) => {
+                          const teamId = e.target.value;
+                          const teamObj = teams.find(t => t.id === teamId);
+                          setChampForm(prev => ({
+                            ...prev,
+                            runnerUpKey: teamId,
+                            runnerUp: teamObj ? teamObj.name : ''
+                          }));
+                        }}
+                        disabled={!canEditHistory}
+                        className="w-full bg-gray-900 border border-gray-800 rounded-lg p-2.5 text-white outline-none cursor-pointer disabled:opacity-50"
+                      >
+                        <option value="">-- Choose Runner-up --</option>
+                        {teams.map(t => (
+                          <option key={t.id} value={t.id}>{t.name} ({t.abbrev})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Series score result</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 4-2 or 4-3"
+                        value={champForm.result}
+                        onChange={(e) => setChampForm({ ...champForm, result: e.target.value })}
+                        disabled={!canEditHistory}
+                        className="w-full bg-gray-900 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none disabled:opacity-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Finals MVP Named</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Carmelo Davis"
+                        value={champForm.fmvpName}
+                        onChange={(e) => setChampForm({ ...champForm, fmvpName: e.target.value })}
+                        disabled={!canEditHistory}
+                        className="w-full bg-gray-900 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Finals MVP Stat Line</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 34.5 PPG, 8.2 RPG, 11.0 APG"
+                      value={champForm.fmvpStats}
+                      onChange={(e) => setChampForm({ ...champForm, fmvpStats: e.target.value })}
+                      disabled={!canEditHistory}
+                      className="w-full bg-gray-900 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Finals Series Highlights Narrative</label>
+                    <textarea
+                      rows={3}
+                      placeholder="Record unforgettable buzzer-beaters, defensive stands, or historical performance descriptions..."
+                      value={champForm.highlight}
+                      onChange={(e) => setChampForm({ ...champForm, highlight: e.target.value })}
+                      disabled={!canEditHistory}
+                      className="w-full bg-gray-900 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none resize-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  {canEditHistory && (
+                    <div className="flex gap-2.5 pt-2">
+                      <button
+                        type="submit"
+                        className="flex-1 py-2.5 bg-amber-400 hover:bg-amber-500 text-gray-950 font-black rounded-lg text-xs transition uppercase shadow-md cursor-pointer text-center"
+                      >
+                        {editingChampId ? 'Save Changes' : 'Log Championship'}
+                      </button>
+                      
+                      {editingChampId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingChampId(null);
+                            setChampForm({
+                              year: '', champion: '', championKey: '',
+                              runnerUp: '', runnerUpKey: '', result: '',
+                              fmvpName: '', fmvpStats: '', highlight: ''
+                            });
+                          }}
+                          className="px-4 py-2.5 bg-gray-800 hover:bg-gray-750 text-gray-300 font-bold rounded-lg text-xs transition uppercase cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </form>
+              </div>
+
+              {/* Right Column: List and Ledger */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="flex items-center justify-between border-b border-gray-850 pb-2">
+                  <h3 className="text-sm font-bold text-gray-200">Chronological Championship Ledger ({championships.length})</h3>
+                  <span className="text-[10px] font-mono text-gray-400 font-bold bg-gray-950 px-2 py-0.5 rounded border border-gray-850">
+                    HISTORIC LEDGER
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 max-h-[75vh] overflow-y-auto pr-1">
+                  {championships.length === 0 ? (
+                    <div className="text-center py-12 bg-gray-950/25 border border-gray-850 rounded-2xl text-gray-500 font-mono text-xs">
+                      No championship records found in the league database. Log the first above!
+                    </div>
+                  ) : (
+                    championships.map(c => {
+                      const champTeam = teams.find(t => t.id === c.championKey || t.abbrev === c.championKey);
+                      const runnerTeam = teams.find(t => t.id === c.runnerUpKey || t.abbrev === c.runnerUpKey);
+
+                      return (
+                        <div key={c.id || c.year} className="bg-gray-950/30 border border-gray-850 hover:border-gray-800 rounded-2xl p-5 relative transition-all duration-300">
+                          
+                          {/* TOP FLOATING RIGHT CONTROLS */}
+                          {canEditHistory && (
+                            <div className="absolute top-4 right-4 flex items-center gap-1">
+                              <button
+                                onClick={() => handleEditChampionship(c)}
+                                className="p-1 px-2.5 text-[10px] font-mono font-bold uppercase rounded bg-gray-900 border border-gray-800 text-amber-500 hover:text-amber-400 hover:bg-gray-800 transition cursor-pointer flex items-center gap-1"
+                                title="Edit Record"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => c.id && handleDeleteChampionship(c.id)}
+                                className="p-1 text-red-500 hover:text-red-400 rounded bg-gray-900 border border-gray-800 hover:bg-red-950/30 transition cursor-pointer"
+                                title="Delete Record"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+
+                          {/* YEAR BADGE */}
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="font-display font-black text-2xl text-amber-400 leading-none">
+                              {c.year}
+                            </span>
+                            <span className="font-mono text-[9px] uppercase tracking-widest bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-bold">
+                              Finals Record
+                            </span>
+                          </div>
+
+                          {/* MATCHUP ROW */}
+                          <div className="grid grid-cols-5 gap-2 items-center bg-gray-950/70 p-3 rounded-xl border border-gray-900 mb-3">
+                            <div className="col-span-2 flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded bg-gray-900 flex items-center justify-center border border-white/5 flex-shrink-0">
+                                {champTeam ? renderLogo(champTeam.logo, "w-6 h-6 object-contain") : <span className="text-xs">🏆</span>}
+                              </div>
+                              <div className="overflow-hidden">
+                                <span className="block font-sans font-black text-white text-xs truncate leading-tight">
+                                  {c.champion}
+                                </span>
+                                <span className="font-mono text-[9px] text-amber-400 font-bold uppercase block mt-0.5">
+                                  CHAMPION ({c.championKey})
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="col-span-1 text-center flex flex-col justify-center">
+                              <span className="block font-mono text-[10px] text-gray-500 uppercase font-black tracking-widest">
+                                SCORE
+                              </span>
+                              <span className="inline-block px-2 py-0.5 mt-0.5 bg-gray-900 text-gray-100 font-mono text-xs font-black border border-gray-850 rounded">
+                                {c.result || 'N/A'}
+                              </span>
+                            </div>
+
+                            <div className="col-span-2 flex items-center justify-end gap-2.5 text-right">
+                              <div className="overflow-hidden">
+                                <span className="block font-sans font-semibold text-gray-200 text-xs truncate leading-tight">
+                                  {c.runnerUp || 'Runner-Up'}
+                                </span>
+                                <span className="font-mono text-[9px] text-gray-400 font-bold uppercase block mt-0.5">
+                                  Runner-up ({c.runnerUpKey || 'N/A'})
+                                </span>
+                              </div>
+                              <div className="w-8 h-8 rounded bg-gray-900 flex items-center justify-center border border-white/5 flex-shrink-0">
+                                {runnerTeam ? renderLogo(runnerTeam.logo, "w-6 h-6 object-contain") : <span className="text-xs">🥈</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* MVP & NOTES INFORMATION */}
+                          <div className="space-y-2 text-[11px] leading-relaxed">
+                            {c.fmvpName && (
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-1 bg-gray-900/40 p-2.5 border border-gray-900 rounded-lg">
+                                <span className="font-mono text-[9px] text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap">
+                                  🏆 Finals MVP:
+                                </span>
+                                <span className="text-gray-100 font-bold font-sans">
+                                  {c.fmvpName}
+                                </span>
+                                <span className="text-gray-400 font-mono text-[10px] sm:ml-1.5 sm:border-l sm:border-gray-800 sm:pl-2">
+                                  {c.fmvpStats}
+                                </span>
+                              </div>
+                            )}
+
+                            {c.highlight && (
+                              <div className="text-gray-400 border-l border-gray-800 pl-2.5 py-0.5 text-xs italic">
+                                "{c.highlight}"
+                              </div>
+                            )}
+                          </div>
+
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* FRANCHISE LEGACY HISTORY TAB (TEAM HISTORIES) */}
+        {/* =================================================================== */}
+        {activeTab === 'teamHistories' && (
+          <div className="space-y-8 font-sans">
+            <div className="bg-gray-950/45 p-6 rounded-2xl border border-gray-800 text-center max-w-2xl mx-auto">
+              <Landmark className="w-8 h-8 text-amber-500 mx-auto mb-3 animate-pulse" />
+              <h3 className="text-base font-bold text-gray-100 uppercase tracking-wide">
+                Update Franchise Legacy Histories
+              </h3>
+              <p className="text-xs text-gray-400 mt-2 max-w-lg mx-auto">
+                Updating history files details the inaugural establishment year, championship trophies registry, legendary players lists, and legacy bios displayed in team profile views.
+              </p>
+
+              {!canEditHistory && (
+                <div className="mt-4 p-3 bg-amber-950/40 border border-amber-800/40 text-amber-300 rounded-lg text-xs leading-normal text-left max-w-lg mx-auto">
+                  ⚠️ <strong>View-Only Notice:</strong> You do not possess <em>editHistory</em> core permissions. You may inspect settings but changing database records is locked.
+                </div>
+              )}
+
+              {/* SELECT ACTIVE FRANCHISE DROPDOWN */}
+              <div className="mt-5 max-w-md mx-auto">
+                <label className="block text-[10px] text-gray-400 font-mono font-bold uppercase tracking-wider mb-2">
+                  Select Franchise to Modify:
+                </label>
+                <select
+                  value={selectedHistoryTeamId}
+                  onChange={(e) => handleSelectHistoryTeam(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-white outline-none cursor-pointer font-bold text-xs hover:border-gray-700 transition"
+                >
+                  <option value="">-- Click to choose franchise --</option>
+                  {teams.map(t => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.abbrev})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {selectedHistoryTeamId ? (() => {
+              const teamObj = teams.find(t => t.id === selectedHistoryTeamId);
+              if (!teamObj) return null;
+
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                  {/* EDIT PANEL */}
+                  <div className="lg:col-span-6 bg-gray-950/50 p-6 rounded-2xl border border-gray-800">
+                    <div className="flex items-center gap-3 border-b border-gray-850 pb-3 mb-5">
+                      <span className="w-8 h-8 bg-gray-900 border border-gray-800 rounded flex items-center justify-center">
+                        {renderLogo(teamObj.logo, "w-6 h-6 object-contain")}
+                      </span>
+                      <div>
+                        <h4 className="text-sm font-bold text-gray-100">{teamObj.name} History Ledger</h4>
+                        <span className="block text-[9px] font-mono text-gray-500 font-bold leading-none uppercase">ID: {teamObj.id}</span>
+                      </div>
+                    </div>
+
+                    <form onSubmit={handleSaveTeamHistory} className="space-y-4 text-xs">
+                      <div>
+                        <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Established Year</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. 1968"
+                          value={historyForm.established}
+                          onChange={(e) => setHistoryForm({ ...historyForm, established: e.target.value })}
+                          disabled={!canEditHistory}
+                          className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-mono disabled:opacity-50"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Championship Years (Comma Separated)</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 1993, 2005, 2021 (leave blank if none)"
+                          value={historyForm.championships}
+                          onChange={(e) => setHistoryForm({ ...historyForm, championships: e.target.value })}
+                          disabled={!canEditHistory}
+                          className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none disabled:opacity-50"
+                        />
+                        <p className="text-[10px] text-gray-500 mt-1 font-mono">Format list as simple comma values (e.g. 1976, 2004).</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Legendary Franchise Players (Comma Separated)</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Steve Nash, Amar'e Stoudemire, Charles Barkley"
+                          value={historyForm.legendaryPlayers}
+                          onChange={(e) => setHistoryForm({ ...historyForm, legendaryPlayers: e.target.value })}
+                          disabled={!canEditHistory}
+                          className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none disabled:opacity-50"
+                        />
+                        <p className="text-[10px] text-gray-500 mt-1 font-mono">Format players as standard commas list.</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Historical Franchise Bio/Narrative</label>
+                        <textarea
+                          rows={6}
+                          required
+                          placeholder="Write about the legacy, historical finals matchups, arena transitions, or key GM eras..."
+                          value={historyForm.historicalBio}
+                          onChange={(e) => setHistoryForm({ ...historyForm, historicalBio: e.target.value })}
+                          disabled={!canEditHistory}
+                          className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none resize-none disabled:opacity-50 leading-relaxed"
+                        />
+                      </div>
+
+                      {canEditHistory && (
+                        <button
+                          type="submit"
+                          className="w-full py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 text-gray-950 font-black rounded-lg text-xs transition uppercase shadow-md cursor-pointer text-center"
+                        >
+                          Save Franchise Legacy History
+                        </button>
+                      )}
+                    </form>
+                  </div>
+
+                  {/* PREVIEW PANEL */}
+                  <div className="lg:col-span-6 bg-gray-950/20 border border-gray-850 p-6 rounded-2xl flex flex-col justify-start">
+                    <div className="flex items-center justify-between border-b border-gray-850 pb-2 mb-4">
+                      <span className="text-[10px] font-mono text-gray-400 uppercase font-black tracking-widest block">
+                        👁️ Live Portal Preview
+                      </span>
+                      <span className="text-[9px] font-mono text-[#f59e0b] font-bold bg-[#f59e0b]/10 border border-[#f59e0b]/20 px-1.5 py-0.5 rounded">
+                        FRANCHISE IDENTITY
+                      </span>
+                    </div>
+
+                    {/* PREVIEW BOARD */}
+                    <div className="bg-gray-950/80 border border-gray-900 rounded-2xl p-6 space-y-5">
+                      <div className="flex items-center gap-4">
+                        <span className="w-16 h-16 bg-gray-900 border border-gray-850 rounded-xl flex items-center justify-center p-2">
+                          {renderLogo(teamObj.logo, "w-12 h-12 object-contain")}
+                        </span>
+                        <div>
+                          <h4 className="font-display font-black text-lg text-white leading-tight">{teamObj.name} Legacy</h4>
+                          <span className="text-[10px] text-gray-400 font-mono">FRANCHISE FOUNDED: <strong>{historyForm.established || '1980'}</strong></span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3.5 pt-2 text-xs">
+                        <div>
+                          <span className="font-mono text-[10px] font-bold text-amber-500 uppercase block mb-1">
+                            🏆 League Championships ({historyForm.championships.split(',').map(s => s.trim()).filter(Boolean).length}):
+                          </span>
+                          {historyForm.championships.split(',').map(s => s.trim()).filter(Boolean).length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {historyForm.championships.split(',').map(s => s.trim()).filter(Boolean).map(y => (
+                                <span key={y} className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-mono text-[10px] font-bold">
+                                  🏆 {y}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-gray-500 font-mono italic">No championships recorded yet.</span>
+                          )}
+                        </div>
+
+                        <div>
+                          <span className="font-mono text-[10px] font-bold text-amber-500 uppercase block mb-1">
+                            🎖️ Legendary Icons:
+                          </span>
+                          {historyForm.legendaryPlayers.split(',').map(s => s.trim()).filter(Boolean).length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {historyForm.legendaryPlayers.split(',').map(s => s.trim()).filter(Boolean).map(player => (
+                                <span key={player} className="bg-gray-900 text-gray-200 border border-gray-800 px-2 py-0.5 rounded text-[10px]">
+                                  {player}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-gray-500 font-mono italic">None recorded.</span>
+                          )}
+                        </div>
+
+                        <div className="border-t border-gray-900 pt-3">
+                          <span className="font-mono text-[10px] font-bold text-gray-500 uppercase block mb-1.5">
+                            Franchise Narrative Bio:
+                          </span>
+                          <p className="text-gray-300 leading-relaxed text-xs italic">
+                            {historyForm.historicalBio ? `"${historyForm.historicalBio}"` : 'Write a custom bio to render in the system panels...'}
+                          </p>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                </div>
+              );
+            })() : (
+              <div className="text-center py-20 bg-gray-950/20 border border-dashed border-gray-850 rounded-2xl text-gray-500 font-mono text-xs">
+                🚨 No franchise selected. Please pick a team from the select box above to modify their historical legacy file.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* MODERATOR CONTROL BOARD TAB (USERS) */}
+        {/* =================================================================== */}
+        {activeTab === 'users' && currentUser?.role === 'admin' && (
+          <div className="space-y-10 font-sans">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              {/* Left Column: Create Mod User */}
+              <div className="lg:col-span-5 bg-gray-950/50 p-6 rounded-2xl border border-gray-800">
+                <div className="mb-5">
+                  <h3 className="text-base font-bold text-gray-100 flex items-center gap-2">
+                    <ShieldAlert className="w-5 h-5 text-amber-500" />
+                    {editingModId ? 'Edit Moderator Account' : 'Register Moderator Account'}
+                  </h3>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    {editingModId ? 'Modify active moderator privileges and credentials below.' : 'Provision localized mod credentials. You must explicitly select which core operations they are cleared for.'}
+                  </p>
+                </div>
+
+                <form onSubmit={editingModId ? handleUpdateModUser : handleAddModUser} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">USERNAME</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. suns_moderator"
+                      value={modForm.username}
+                      onChange={(e) => setModForm({ ...modForm, username: e.target.value.toLowerCase().replace(/\s+/g, '') })}
+                      className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">PASSWORD</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Enter safe password"
+                      value={modForm.password}
+                      onChange={(e) => setModForm({ ...modForm, password: e.target.value })}
+                      className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-mono"
+                    />
+                  </div>
+
+                  {/* Permissions Selection */}
+                  <div className="bg-gray-900/60 p-4 rounded-xl border border-gray-900 space-y-3">
+                    <span className="block font-mono text-[9px] text-[#f59e0b] font-black uppercase tracking-wider">
+                      Granted Moderation Capabilities:
+                    </span>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={modForm.editHistory}
+                        onChange={(e) => setModForm({ ...modForm, editHistory: e.target.checked })}
+                        className="mt-0.5 accent-amber-500 rounded cursor-pointer h-4 w-4"
+                      />
+                      <div>
+                        <span className="block font-bold text-gray-200">History & Champions Registry (`editHistory`)</span>
+                        <span className="block text-[10px] text-gray-500 leading-tight">Authorize adding/updating Finals history or Franchise narratives.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={modForm.editDrafts}
+                        onChange={(e) => setModForm({ ...modForm, editDrafts: e.target.checked })}
+                        className="mt-0.5 accent-amber-500 rounded cursor-pointer h-4 w-4"
+                      />
+                      <div>
+                        <span className="block font-bold text-gray-200">Draft ledger & Awards (`editDrafts`)</span>
+                        <span className="block text-[10px] text-gray-500 leading-tight">Authorize logging/editing rookie drafts or season awards.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={modForm.editRosters}
+                        onChange={(e) => setModForm({ ...modForm, editRosters: e.target.checked })}
+                        className="mt-0.5 accent-amber-500 rounded cursor-pointer h-4 w-4"
+                      />
+                      <div>
+                        <span className="block font-bold text-gray-200">Rosters, Teams & Athletes (`editRosters`)</span>
+                        <span className="block text-[10px] text-gray-500 leading-tight">Authorize changing player ratings, trades, and roster listings.</span>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 bg-amber-400 hover:bg-amber-500 text-gray-950 font-black rounded-lg text-xs transition uppercase shadow-md cursor-pointer text-center"
+                    >
+                      {editingModId ? 'Update Account Summary' : 'Save & Create Account'}
+                    </button>
+                    {editingModId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingModId(null);
+                          setModForm({ username: '', password: '', editHistory: false, editDrafts: false, editRosters: false });
+                        }}
+                        className="px-4 py-2.5 bg-gray-800 hover:bg-gray-750 text-gray-300 font-bold rounded-lg text-xs transition uppercase cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </div>
+
+              {/* Right Column: List of Mod Accounts */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="flex items-center justify-between border-b border-gray-850 pb-2">
+                  <h3 className="text-sm font-bold text-gray-200">Active Authorized Moderators ({users.length})</h3>
+                  <span className="text-[10px] font-mono text-gray-400 font-bold bg-gray-950 px-2 py-0.5 rounded border border-gray-850">
+                    SYSTEM ROLES
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 max-h-[75vh] overflow-y-auto pr-1">
+                  {users.map(u => {
+                    const isCurrentUser = currentUser?.username === u.username;
+
+                    return (
+                      <div key={u.id || u.username} className="bg-gray-950/30 border border-gray-850 rounded-2xl p-5 flex items-center justify-between transition-all">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-gray-100 font-mono">
+                              {u.username}
+                            </span>
+                            
+                            <span className="text-[9px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded uppercase">
+                              Assigned Moderator
+                            </span>
+
+                            {isCurrentUser && (
+                              <span className="text-[9px] font-mono font-bold bg-green-500/10 text-green-400 border border-green-500/20 px-1.5 py-0.5 rounded uppercase">
+                                You
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-wrap text-[10px]">
+                            <span className="font-mono text-gray-500">Rights:</span>
+                            
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold ${u.permissions?.editHistory ? 'bg-amber-400/10 text-amber-400' : 'bg-gray-900 text-gray-600'}`}>
+                                History {u.permissions?.editHistory ? '✓' : '✗'}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold ${u.permissions?.editDrafts ? 'bg-amber-400/10 text-amber-400' : 'bg-gray-900 text-gray-600'}`}>
+                                Drafts {u.permissions?.editDrafts ? '✓' : '✗'}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold ${u.permissions?.editRosters ? 'bg-amber-400/10 text-amber-400' : 'bg-gray-900 text-gray-600'}`}>
+                                Rosters {u.permissions?.editRosters ? '✓' : '✗'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* EDIT & DELETE ACTIONS */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleEditModUser(u)}
+                            className="p-1 px-2.5 text-[10px] font-mono font-bold uppercase rounded bg-gray-900 border border-gray-850 text-amber-500 hover:text-amber-400 hover:bg-gray-850 transition cursor-pointer flex items-center gap-1"
+                            title="Edit Moderator account"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            Edit
+                          </button>
+
+                          {!isCurrentUser && (
+                            <button
+                              onClick={() => u.id && handleDeleteModUser(u.id)}
+                              className="p-2 text-red-500 hover:text-red-400 hover:bg-red-950/20 rounded bg-gray-900 border border-gray-850 hover:border-red-900 transition cursor-pointer"
+                              title="Revoke Moderator Account"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>

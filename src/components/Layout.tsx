@@ -7,6 +7,8 @@ import { useState, useEffect, ReactNode } from 'react';
 import { Menu, X, ShieldAlert, Cpu, Award as AwardIcon, Users, RefreshCw, BarChart2, Radio, CalendarDays, ArrowLeftRight, Trophy } from 'lucide-react';
 import { Team } from '../types';
 import { renderLogo } from '../utils';
+// @ts-ignore
+import viperProfile from '../assets/images/viper_profile_1781873598030.jpg';
 
 interface LayoutProps {
   children: ReactNode;
@@ -101,8 +103,8 @@ export default function Layout({
                 className="flex items-center gap-2.5 group focus:outline-none"
                 id="header-brand-logo"
               >
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-600 to-amber-500 flex items-center justify-center font-display font-extrabold text-white text-xl shadow-lg ring-2 ring-red-500/20 group-hover:scale-105 transition duration-200">
-                  🐍
+                <div className="w-10 h-10 rounded-xl bg-gray-950 flex items-center justify-center font-display font-extrabold text-white shadow-lg ring-2 ring-red-500/25 group-hover:scale-105 transition duration-200 overflow-hidden">
+                  <img src={viperProfile} alt="Viper Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 </div>
                 <div className="text-left">
                   <span className="block font-display text-lg sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-white via-gray-100 to-red-400 bg-clip-text text-transparent group-hover:text-red-400 transition">

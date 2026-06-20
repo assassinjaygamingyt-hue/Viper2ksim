@@ -100,6 +100,7 @@ export interface DBState {
 }
 
 export interface ChampionshipRecord {
+  id?: string;
   year: string;
   champion: string;
   championKey: string;

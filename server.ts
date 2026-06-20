@@ -11,17 +11,44 @@ import { createServer as createViteServer } from 'vite';
 import { DBState, Team, Player, NewsArticle, PowerRankingEntry, Trade, DraftResult, Award, ChampionshipRecord, TeamHistory, ModUser } from './src/types.js';
 import { championshipsData } from './src/data/championships.js';
 import { detailedTeamHistories } from './src/data/teamHistories.js';
+import { initPlayersPool } from './src/data/initPlayers.js';
 
 
-// Bulletproof path resolution for both ESM and CommonJS
-let currentDirname = '';
-try {
-  currentDirname = __dirname;
-} catch (e) {
-  currentDirname = path.dirname(fileURLToPath(import.meta.url));
-}
+// Bulletproof path resolution using process.cwd() for both Dev and Production
+const DB_PATH = path.resolve(process.cwd(), './src/db.json');
 
-const DB_PATH = path.resolve(currentDirname, './src/db.json');
+// Authentic 2003-2004 historical NBA logo URLs from Wikimedia/Wikipedia
+const HISTORICAL_LOGOS_2003_2004: { [key: string]: string } = {
+  IND: 'https://upload.wikimedia.org/wikipedia/en/thumb/1/1b/Indiana_Pacers_logo_%281990-2005%29.svg/1200px-Indiana_Pacers_logo_%281990-2005%29.svg.png',
+  DET: 'https://upload.wikimedia.org/wikipedia/en/thumb/1/1e/Detroit_Pistons_logo_%282001-2005%29.svg/1200px-Detroit_Pistons_logo_%282001-2005%29.svg.png',
+  NJN: 'https://upload.wikimedia.org/wikipedia/en/thumb/e/e1/New_Jersey_Nets_logo_%281997-2012%29.svg/1200px-New_Jersey_Nets_logo_%281997-2012%29.svg.png',
+  MIA: 'https://upload.wikimedia.org/wikipedia/en/thumb/1/1a/Miami_Heat_logo.svg/1200px-Miami_Heat_logo.svg.png',
+  PHI: 'https://upload.wikimedia.org/wikipedia/en/thumb/1/14/Philadelphia_76ers_logo_%281997-2009%29.svg/1200px-Philadelphia_76ers_logo_%281997-2009%29.svg.png',
+  BOS: 'https://upload.wikimedia.org/wikipedia/en/thumb/8/8f/Boston_Celtics.svg/1200px-Boston_Celtics.svg.png',
+  NYK: 'https://upload.wikimedia.org/wikipedia/en/thumb/2/25/New_York_Knicks_logo.svg/1200px-New_York_Knicks_logo.svg.png',
+  WAS: 'https://upload.wikimedia.org/wikipedia/en/thumb/2/23/Washington_Wizards_logo_%281997-2011%29.svg/1200px-Washington_Wizards_logo_%281997-2011%29.svg.png',
+  ORL: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/5a/Orlando_Magic_logo_%282000-2010%29.svg/1200px-Orlando_Magic_logo_%282000-2010%29.svg.png',
+  NOH: 'https://upload.wikimedia.org/wikipedia/en/thumb/2/21/New_Orleans_Hornets_logo.svg/1200px-New_Orleans_Hornets_logo.svg.png',
+  MIL: 'https://upload.wikimedia.org/wikipedia/en/thumb/2/2a/Milwaukee_Bucks_logo_%281993-2006%29.svg/1200px-Milwaukee_Bucks_logo_%281993-2006%29.svg.png',
+  CLE: 'https://upload.wikimedia.org/wikipedia/en/thumb/f/f7/Cleveland_Cavaliers_2003_Logo.svg/1200px-Cleveland_Cavaliers_2003_Logo.svg.png',
+  TOR: 'https://upload.wikimedia.org/wikipedia/en/thumb/3/36/Toronto_Raptors_logo_%281995-2008%29.svg/1200px-Toronto_Raptors_logo_%281995-2008%29.svg.png',
+  ATL: 'https://upload.wikimedia.org/wikipedia/en/thumb/0/04/Atlanta_Hawks_logo_%281995-2007%29.svg/1200px-Atlanta_Hawks_logo_%281995-2007%29.svg.png',
+  CHI: 'https://upload.wikimedia.org/wikipedia/en/thumb/6/67/Chicago_Bulls_logo.svg/1200px-Chicago_Bulls_logo.svg.png',
+  MIN: 'https://upload.wikimedia.org/wikipedia/en/thumb/7/7a/Minnesota_Timberwolves_logo_%281996-2017%29.svg/1200px-Minnesota_Timberwolves_logo_%281996-2017%29.svg.png',
+  SAS: 'https://upload.wikimedia.org/wikipedia/en/thumb/a/a2/San_Antonio_Spurs_logo.svg/1200px-San_Antonio_Spurs_logo.svg.png',
+  LAL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Los_Angeles_Lakers_logo.svg/1200px-Los_Angeles_Lakers_logo.svg.png',
+  SAC: 'https://upload.wikimedia.org/wikipedia/en/thumb/c/c7/Sacramento_Kings_logo_%281994-2016%29.svg/1200px-Sacramento_Kings_logo_%281994-2016%29.svg.png',
+  DAL: 'https://upload.wikimedia.org/wikipedia/en/thumb/9/97/Dallas_Mavericks_logo.svg/1200px-Dallas_Mavericks_logo.svg.png',
+  MEM: 'https://upload.wikimedia.org/wikipedia/en/thumb/1/1e/Memphis_Grizzlies_logo_%281995-2004%29.svg/1200px-Memphis_Grizzlies_logo_%281995-2004%29.svg.png',
+  HOU: 'https://upload.wikimedia.org/wikipedia/en/thumb/2/28/Houston_Rockets_logo.svg/1200px-Houston_Rockets_logo.svg.png',
+  DEN: 'https://upload.wikimedia.org/wikipedia/en/thumb/7/7b/Denver_Nuggets_logo_%282003-2018%29.svg/1200px-Denver_Nuggets_logo_%282003-2018%29.svg.png',
+  UTA: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/52/Utah_Jazz_logo_%281996-2004%29.svg/1200px-Utah_Jazz_logo_%281996-2004%29.svg.png',
+  POR: 'https://upload.wikimedia.org/wikipedia/en/thumb/7/74/Portland_Trail_Blazers_logo_%282002-2017%29.svg/1200px-Portland_Trail_Blazers_logo_%282002-2017%29.svg.png',
+  SEA: 'https://upload.wikimedia.org/wikipedia/en/thumb/a/a4/Seattle_SuperSonics_logo.svg/1200px-Seattle_SuperSonics_logo.svg.png',
+  GSW: 'https://upload.wikimedia.org/wikipedia/en/thumb/0/01/Golden_State_Warriors_logo_%281997-2010%29.svg/1200px-Golden_State_Warriors_logo_%281997-2010%29.svg.png',
+  PHX: 'https://upload.wikimedia.org/wikipedia/en/thumb/d/dc/Phoenix_Suns_Logo_%282000-2013%29.svg/1200px-Phoenix_Suns_Logo_%282000-2013%29.svg.png',
+  LAC: 'https://upload.wikimedia.org/wikipedia/en/thumb/b/bb/Los_Angeles_Clippers_logo_%281984-2015%29.svg/1200px-Los_Angeles_Clippers_logo_%281984-2015%29.svg.png'
+};
 
 // Memory DB cache
 let dbState: DBState = {
@@ -57,6 +84,14 @@ function loadDB() {
         ...c
       }));
       modified = true;
+    } else {
+      // Ensure all championships have a unique ID for editing/deleting in admin panel
+      dbState.championships.forEach((c: any, i: number) => {
+        if (!c.id) {
+          c.id = `champ-init-${1000 + i}-${Date.now()}`;
+          modified = true;
+        }
+      });
     }
 
     // Populate initial static data for detailed team histories if not present
@@ -69,6 +104,64 @@ function loadDB() {
     if (!dbState.users) {
       dbState.users = [];
       modified = true;
+    } else {
+      // Ensure all moderator users have a unique ID for editing/deleting in admin panel
+      dbState.users.forEach((u: any, i: number) => {
+        if (!u.id) {
+          u.id = `mod-init-${1000 + i}-${Date.now()}`;
+          modified = true;
+        }
+      });
+    }
+
+    // Auto-assign high-res official NBA logo URLs if current logo is blank or an emoji
+    if (dbState.teams && dbState.teams.length > 0) {
+      dbState.teams.forEach(t => {
+        const standardLogo = HISTORICAL_LOGOS_2003_2004[t.abbrev];
+        if (standardLogo) {
+          const isEmoji = !t.logo || t.logo.length <= 4 || (!t.logo.startsWith('http') && !t.logo.startsWith('data:'));
+          if (isEmoji) {
+            t.logo = standardLogo;
+            modified = true;
+          }
+        }
+      });
+    }
+
+    // Ensure all teams have exactly 15 players from our 2003-2004 roster pool
+    if (dbState.teams && dbState.teams.length > 0) {
+      dbState.teams.forEach(t => {
+        let teamPlayers = dbState.players.filter(p => p.teamId === t.id);
+        if (teamPlayers.length < 15) {
+          const pool = initPlayersPool[t.id] || [];
+          for (const candidate of pool) {
+            if (teamPlayers.length >= 15) break;
+
+            // Check if player with this name already exists in this team's roster (matching case-insensitive)
+            const exists = teamPlayers.some(p => p.name.trim().toLowerCase() === candidate.name.trim().toLowerCase());
+            if (!exists) {
+              const safeNameId = candidate.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
+              const newPlayer: Player = {
+                id: `player-${t.abbrev.toLowerCase()}-${safeNameId}`,
+                teamId: t.id,
+                name: candidate.name,
+                position: candidate.position,
+                age: candidate.age,
+                rating: candidate.rating,
+                contract: candidate.contract,
+                ppg: 0,
+                rpg: 0,
+                apg: 0,
+                spg: 0,
+                bpg: 0
+              };
+              dbState.players.push(newPlayer);
+              modified = true;
+              teamPlayers = dbState.players.filter(p => p.teamId === t.id);
+            }
+          }
+        }
+      });
     }
 
     if (modified) {
@@ -200,6 +293,21 @@ app.put('/api/teams/:id', (req, res) => {
   res.json(updatedTeam);
 });
 
+// Auto Assign Logos to Official 2003-2004 NBA Logos
+app.post('/api/teams/auto-assign-logos', (req, res) => {
+  let count = 0;
+  dbState.teams.forEach(t => {
+    const standardLogo = HISTORICAL_LOGOS_2003_2004[t.abbrev];
+    if (standardLogo) {
+      t.logo = standardLogo;
+      count++;
+    }
+  });
+
+  saveDB();
+  res.json({ success: true, message: `Auto-assigned historical 2003-2004 NBA logos to ${count} teams.` });
+});
+
 app.delete('/api/teams/:id', (req, res) => {
   const teamId = req.params.id;
   const originalCount = dbState.teams.length;
@@ -234,6 +342,12 @@ app.post('/api/players', (req, res) => {
     return res.status(400).json({ error: 'Missing essential player data.' });
   }
 
+  // Validate roster limit of exactly 15 players max per team
+  const currentRosterSize = dbState.players.filter(p => p.teamId === newPlayer.teamId).length;
+  if (currentRosterSize >= 15) {
+    return res.status(400).json({ error: 'Franchise roster is full. A team can have at most 15 players.' });
+  }
+
   newPlayer.age = Number(newPlayer.age) || 20;
   newPlayer.rating = Number(newPlayer.rating) || 75;
   newPlayer.ppg = Number(newPlayer.ppg) || 0.0;
@@ -253,6 +367,17 @@ app.put('/api/players/:id', (req, res) => {
   const index = dbState.players.findIndex(p => p.id === playerId);
   if (index === -1) {
     return res.status(404).json({ error: 'Player not found.' });
+  }
+
+  const oldPlayer = dbState.players[index];
+  const targetTeamId = req.body.teamId;
+
+  // If player is traded or moved to a different team, validate that team is not full
+  if (targetTeamId && targetTeamId !== oldPlayer.teamId) {
+    const targetRosterSize = dbState.players.filter(p => p.teamId === targetTeamId).length;
+    if (targetRosterSize >= 15) {
+      return res.status(400).json({ error: 'Target franchise roster is full. A team can have at most 15 players.' });
+    }
   }
 
   const updatedPlayer = { ...dbState.players[index], ...req.body };

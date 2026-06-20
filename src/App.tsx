@@ -53,8 +53,93 @@ export default function App() {
   } | null>(null);
 
   // Standings filter state & Standings sort order
-  const [standingsTab, setStandingsTab] = useState<'all' | 'East' | 'West'>('all');
+  const [standingsTab, setStandingsTab] = useState<'all' | 'East' | 'West'>('East');
   const [standingsSort, setStandingsSort] = useState<'pct' | 'wins' | 'ptsFor' | 'ptsAgainst'>('pct');
+
+  // Helper to format team banner styles safely
+  const getBannerStyle = (banner: string | undefined): string => {
+    if (!banner) return 'linear-gradient(to right, #111827, #1f2937)';
+    if (banner.startsWith('url(') || banner.includes('gradient')) return banner;
+    return `url("${banner}")`;
+  };
+
+  // State for branding modal edit
+  const [isBrandingModalOpen, setIsBrandingModalOpen] = useState(false);
+  const [brandingForm, setBrandingForm] = useState({
+    id: '',
+    name: '',
+    abbrev: '',
+    logo: '',
+    banner: '',
+    gmInstagram: '',
+    retiredJerseys: ''
+  });
+  const [brandingError, setBrandingError] = useState('');
+  const [brandingSuccess, setBrandingSuccess] = useState('');
+
+  const openBrandingModal = (team: Team) => {
+    setBrandingForm({
+      id: team.id,
+      name: team.name,
+      abbrev: team.abbrev,
+      logo: team.logo || '',
+      banner: team.banner || '',
+      gmInstagram: team.gmInstagram || '',
+      retiredJerseys: team.retiredJerseys || ''
+    });
+    setBrandingError('');
+    setBrandingSuccess('');
+    setIsBrandingModalOpen(true);
+  };
+
+  const handleBrandingLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setBrandingForm(prev => ({ ...prev, logo: reader.result as string }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleBrandingBannerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setBrandingForm(prev => ({ ...prev, banner: reader.result as string }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveBranding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!brandingForm.id) return;
+    try {
+      setBrandingError('');
+      setBrandingSuccess('');
+      const resp = await fetch(`/api/teams/${brandingForm.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: brandingForm.name,
+          abbrev: brandingForm.abbrev,
+          logo: brandingForm.logo,
+          banner: brandingForm.banner,
+          gmInstagram: brandingForm.gmInstagram,
+          retiredJerseys: brandingForm.retiredJerseys
+        })
+      });
+      if (!resp.ok) throw new Error('Failed to update team visual branding.');
+      setBrandingSuccess('Branding updated successfully! Syncing...');
+      fetchDB();
+      setTimeout(() => {
+        setIsBrandingModalOpen(false);
+      }, 800);
+    } catch (err: any) {
+      setBrandingError(err.message || 'Error occurred while saving.');
+    }
+  };
 
   // Loading indicator
   const [loading, setLoading] = useState(true);
@@ -362,7 +447,7 @@ export default function App() {
                       Built For <span className="text-red-500 bg-red-500/10 px-2 rounded">Vipers</span>
                     </h1>
                     <p className="text-base text-gray-300 leading-relaxed max-w-xl">
-                      Experience professional basketball in the virtual realm. Track custom franchises, real contract rosters, trades, and college draft history. Powered by the Viper2k Simulator.
+                      Experience professional basketball in the virtual realm. Track custom franchises, player rosters, trades, and college draft history. Powered by the Viper2k Simulator.
                     </p>
                     <div className="flex flex-wrap gap-3 pt-2">
                       <button
@@ -583,7 +668,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 border-b border-gray-800 pb-4">
                 <div>
                   <h1 className="text-3xl font-display font-black tracking-tight text-white uppercase">LEAGUE STANDINGS</h1>
-                  <p className="text-xs text-gray-400 font-mono">Real-time simulation wins, losses, streaks, and quotients.</p>
+                  <p className="text-xs text-gray-400 font-mono">Real-time simulation wins, losses, streaks, and win percentages.</p>
                 </div>
 
                 {/* FILTERS */}
@@ -793,7 +878,7 @@ export default function App() {
                           {/* GRADIENT PANEL BANNER */}
                           <div
                             className="h-16 flex items-end justify-between px-4 pb-2 relative"
-                            style={{ backgroundImage: t.banner || 'linear-gradient(to right, #222, #444)' }}
+                            style={{ backgroundImage: getBannerStyle(t.banner) }}
                           >
                             <span className="absolute inset-0 bg-black/10"></span>
                             <span className="font-mono text-[10px] font-black text-white/80 z-10 bg-black/30 px-1.5 py-0.5 rounded font-bold">
@@ -854,14 +939,52 @@ export default function App() {
 
                 {/* TEAM PROFILE HERO BANNER */}
                 <section
-                  className="rounded-3xl border border-gray-800 overflow-hidden relative shadow-2xl"
-                  style={{ backgroundImage: activeTeam.banner }}
+                  onClick={() => isAdminLoggedIn && openBrandingModal(activeTeam)}
+                  className={`rounded-3xl border border-gray-800 overflow-hidden relative shadow-2xl group transition-all duration-300 ${
+                    isAdminLoggedIn ? 'cursor-pointer hover:border-amber-500/55' : ''
+                  }`}
+                  style={{ backgroundImage: getBannerStyle(activeTeam.banner) }}
                 >
-                  <div className="absolute inset-0 bg-black/30 backdrop-brightness-[0.85]"></div>
+                  {isAdminLoggedIn ? (
+                    <div className="absolute inset-0 bg-black/40 group-hover:bg-black/55 backdrop-brightness-[0.85] transition-all duration-300 flex items-center justify-center">
+                      <span className="opacity-0 group-hover:opacity-100 transition-all duration-300 bg-gray-950/90 text-amber-400 border border-amber-500/30 text-xs font-mono py-1.5 px-3 rounded-lg shadow-2xl font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                        Click outer banner to edit top image
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="absolute inset-0 bg-black/30 backdrop-brightness-[0.85]"></div>
+                  )}
+                  
+                  {/* ADMIN BRANDING FLOATING CONTROLS */}
+                  {isAdminLoggedIn && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openBrandingModal(activeTeam); }}
+                      className="absolute top-4 right-4 bg-gray-950/90 hover:bg-gray-900 text-white hover:text-amber-400 font-mono text-xs font-black border border-white/10 rounded-xl px-4 py-2 shadow-2xl transition-all duration-300 z-20 flex items-center gap-1.5 cursor-pointer hover:scale-105"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                      Customize Branding & Logos
+                    </button>
+                  )}
+
                   <div className="relative z-10 p-6 sm:p-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                     <div className="flex items-center gap-4 sm:gap-6">
-                      <span className="w-28 h-28 sm:w-36 sm:h-36 flex items-center justify-center bg-gray-950 border-2 border-white/10 rounded-3xl shadow-2xl transition hover:scale-105 duration-300">
-                        {renderLogo(activeTeam.logo, "w-20 h-20 sm:w-24 sm:h-24 object-contain")}
+                      <span
+                        onClick={() => isAdminLoggedIn && openBrandingModal(activeTeam)}
+                        className={`w-[200px] h-[200px] flex items-center justify-center bg-gray-950 border-2 border-white/10 rounded-3xl shadow-2xl transition hover:scale-105 duration-300 relative group flex-shrink-0 ${
+                          isAdminLoggedIn ? 'cursor-pointer border-amber-500/40 hover:border-amber-500' : ''
+                        }`}
+                      >
+                        {activeTeam.logo && (activeTeam.logo.startsWith('http') || activeTeam.logo.startsWith('data:')) ? (
+                          renderLogo(activeTeam.logo, "w-[180px] h-[180px] object-contain rounded-2xl")
+                        ) : (
+                          <span className="text-7xl">{activeTeam.logo || '🏀'}</span>
+                        )}
+                        {isAdminLoggedIn && (
+                          <div className="absolute inset-0 bg-black/75 rounded-3xl flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition duration-300">
+                            <span className="text-[10px] uppercase font-mono font-black text-amber-500 tracking-wider">Edit Logo</span>
+                          </div>
+                        )}
                       </span>
                       <div>
                         <span className="block font-mono text-[10px] tracking-widest text-[#f59e0b] leading-none uppercase font-bold">
@@ -954,7 +1077,6 @@ export default function App() {
                               <th className="py-2.5">Player Name</th>
                               <th>Age / Position</th>
                               <th className="text-center">Overall</th>
-                              <th className="text-right">Contract Terms</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -979,7 +1101,6 @@ export default function App() {
                                     {p.rating}
                                   </span>
                                 </td>
-                                <td className="text-right font-mono text-gray-450">{p.contract}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1158,7 +1279,7 @@ export default function App() {
                   <ArrowLeftRight className="w-8 h-8 text-amber-500" />
                   LEAGUE TRADE TRACKER
                 </h1>
-                <p className="text-xs text-gray-400 font-mono">Completed transactions, draft acquisitions, and financial contracts logged by administrators.</p>
+                <p className="text-xs text-gray-400 font-mono">Completed transactions, trade acquisitions, and roster updates logged by administrators.</p>
               </div>
 
               {trades.length === 0 ? (
@@ -1398,8 +1519,8 @@ export default function App() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {(championships && championships.length > 0 ? championships : championshipsData).map((champ) => {
-                  const winnerTeam = teams.find(t => t.id === champ.championKey);
-                  const runnerUpTeam = teams.find(t => t.id === champ.runnerUpKey);
+                  const winnerTeam = teams.find(t => t.id === champ.championKey || t.abbrev === champ.championKey);
+                  const runnerUpTeam = teams.find(t => t.id === champ.runnerUpKey || t.abbrev === champ.runnerUpKey);
 
                   return (
                     <div
@@ -1540,12 +1661,6 @@ export default function App() {
                       <div className="flex justify-between items-center py-2.5 border-b border-gray-850 font-mono">
                         <span className="text-gray-400">Athlete Age</span>
                         <span className="text-gray-200 font-bold">{p.age} Years Old</span>
-                      </div>
-                      <div className="flex justify-between items-center py-2.5 border-b border-gray-850 font-mono font-bold">
-                        <span className="text-gray-450 font-normal">Active Contract / Salary Terms</span>
-                        <span className={`text-xs ${p.isRetired ? 'text-gray-550' : 'text-amber-500'}`}>
-                          {p.contract || 'Honorized/Retired'}
-                        </span>
                       </div>
                     </div>
 
@@ -1696,6 +1811,203 @@ export default function App() {
                   className="px-5 py-2 bg-gradient-to-r from-amber-400 to-amber-500 text-gray-950 hover:from-amber-500 font-bold rounded-lg transition text-xs uppercase shadow-md cursor-pointer"
                 >
                   Confirm Key
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* FRANCHISE IDENTITY & LOGO CUSTOMIZER PORTAL (MODAL) */}
+      {/* =================================================================== */}
+      {isBrandingModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 font-sans">
+          <div className="bg-gray-900 border border-gray-800 rounded-3xl w-full max-w-xl relative shadow-2xl overflow-hidden animate-fade-in-quick my-auto flex flex-col max-h-[92vh]">
+            
+            {/* COMPOSITE BRAND HEADER PREVIEW */}
+            <div
+              className="h-32 p-6 flex flex-col justify-end relative transition-all duration-300"
+              style={{ backgroundImage: getBannerStyle(brandingForm.banner) }}
+            >
+              <div className="absolute inset-0 bg-black/45"></div>
+              <button
+                onClick={() => setIsBrandingModalOpen(false)}
+                className="absolute right-5 top-5 w-8 h-8 rounded-full bg-black/60 hover:bg-black/90 border border-white/10 text-gray-300 hover:text-white flex items-center justify-center font-bold text-sm transition cursor-pointer z-30"
+              >
+                ✕
+              </button>
+
+              <div className="relative z-10 flex items-center gap-4">
+                <span className="w-16 h-16 flex items-center justify-center bg-gray-950 border-2 border-white/10 rounded-2xl shadow-xl flex-shrink-0 overflow-hidden">
+                  {renderLogo(brandingForm.logo, "w-12 h-12 object-contain")}
+                </span>
+                <div>
+                  <span className="block font-mono text-[9px] tracking-widest text-[#f59e0b] uppercase font-bold leading-none">
+                    Real-time Visual Preview
+                  </span>
+                  <h3 className="font-display font-black text-xl text-white tracking-tight leading-none mt-1">
+                    {brandingForm.name || 'Your Team Name'}
+                  </h3>
+                  <span className="mt-1 inline-block font-mono text-[10px] bg-black/40 px-1.5 py-0.5 rounded text-gray-400">
+                    CODE: {brandingForm.abbrev || 'CODE'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* INTERIOR SCROLL FORM */}
+            <form onSubmit={handleSaveBranding} className="p-6 overflow-y-auto space-y-4 flex-1 text-xs">
+              <div className="border-b border-gray-850 pb-3">
+                <h4 className="text-sm font-display font-black text-gray-100 uppercase tracking-wide">
+                  Customize Visual Identity
+                </h4>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Updating this team's logos, colors, or header images saves changes directly to the league database.
+                </p>
+              </div>
+
+              {/* DUAL TEXT FIELD FIELDS */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Franchise Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={brandingForm.name}
+                    onChange={(e) => setBrandingForm({ ...brandingForm, name: e.target.value })}
+                    className="w-full bg-gray-950 border border-gray-850 hover:border-gray-750 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none"
+                    placeholder="e.g. Phoenix Suns"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">Uniform Code (Abbreviation)</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    required
+                    value={brandingForm.abbrev}
+                    onChange={(e) => setBrandingForm({ ...brandingForm, abbrev: e.target.value.toUpperCase() })}
+                    className="w-full bg-gray-950 border border-gray-850 hover:border-gray-750 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-mono"
+                    placeholder="e.g. PHX"
+                  />
+                </div>
+              </div>
+
+              {/* LOGO INPUT SECTOR */}
+              <div className="border-t border-gray-850/50 pt-3">
+                <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase block">
+                  1. Corporate Team Logo
+                </label>
+                <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
+                  <input
+                    type="text"
+                    value={brandingForm.logo.startsWith('data:') ? '[Device File Processed]' : brandingForm.logo}
+                    onChange={(e) => setBrandingForm({ ...brandingForm, logo: e.target.value })}
+                    className="flex-1 bg-gray-950 border border-gray-850 rounded-lg p-2.5 text-white outline-none"
+                    placeholder="Paste a custom logo Image URL (or upload below)"
+                  />
+                  <label className="bg-gray-800 hover:bg-gray-750 border border-gray-700 text-white hover:text-amber-400 font-mono text-center flex items-center justify-center px-4 py-2.5 rounded-lg font-bold cursor-pointer transition whitespace-nowrap">
+                    Upload File...
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleBrandingLogoChange}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                <p className="text-[10px] text-gray-500 mt-1 leading-normal font-mono">
+                  Transparent PNG or vector assets look best. Maximum size is ~5MB.
+                </p>
+              </div>
+
+              {/* HERO BANNER EDIT SECTOR */}
+              <div className="border-t border-gray-850/50 pt-3">
+                <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase block">
+                  2. Hero Background Banner Image / CSS
+                </label>
+                <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
+                  <input
+                    type="text"
+                    value={brandingForm.banner.startsWith('data:') || brandingForm.banner.startsWith('url("data:') ? '[Device File Processed]' : brandingForm.banner}
+                    onChange={(e) => setBrandingForm({ ...brandingForm, banner: e.target.value })}
+                    className="flex-1 bg-gray-950 border border-gray-850 rounded-lg p-2.5 text-white outline-none"
+                    placeholder="Paste background Image URL, or gradient string (e.g. linear-gradient(...))"
+                  />
+                  <label className="bg-gray-800 hover:bg-gray-750 border border-gray-700 text-white hover:text-amber-400 font-mono text-center flex items-center justify-center px-4 py-2.5 rounded-lg font-bold cursor-pointer transition whitespace-nowrap">
+                    Upload Banner...
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleBrandingBannerChange}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                <p className="text-[10px] text-gray-500 mt-1 leading-normal font-mono">
+                  Supports remote URLs, file uploads, or linear-gradient style strings.
+                </p>
+              </div>
+
+              {/* AUX METRICS SECTOR */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-gray-850/50 pt-3">
+                <div>
+                  <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">
+                    GM INSTAGRAM HANDLE
+                  </label>
+                  <input
+                    type="text"
+                    value={brandingForm.gmInstagram}
+                    onChange={(e) => setBrandingForm({ ...brandingForm, gmInstagram: e.target.value })}
+                    className="w-full bg-gray-950 border border-gray-850 hover:border-gray-750 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-mono"
+                    placeholder="@username"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">
+                    RETIRED JERSEY NUMBERS
+                  </label>
+                  <input
+                    type="text"
+                    value={brandingForm.retiredJerseys}
+                    onChange={(e) => setBrandingForm({ ...brandingForm, retiredJerseys: e.target.value })}
+                    className="w-full bg-gray-950 border border-gray-850 hover:border-gray-750 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-mono"
+                    placeholder="e.g. 34 (Barkley), 13 (Nash)"
+                  />
+                </div>
+              </div>
+
+              {/* ALERTS SECTION */}
+              {brandingError && (
+                <div className="p-3 bg-red-950/40 border border-red-800/40 text-red-400 rounded flex items-center gap-1.5 leading-tight">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>{brandingError}</span>
+                </div>
+              )}
+
+              {brandingSuccess && (
+                <div className="p-3 bg-green-950/40 border border-green-800/40 text-green-400 rounded flex items-center gap-1.5 leading-tight">
+                  <Check className="w-4 h-4 flex-shrink-0" />
+                  <span>{brandingSuccess}</span>
+                </div>
+              )}
+
+              {/* DIALOG CONTROLS */}
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-gray-850">
+                <button
+                  type="button"
+                  onClick={() => setIsBrandingModalOpen(false)}
+                  className="px-4 py-2 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition font-semibold cursor-pointer"
+                >
+                  Discard
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 text-gray-950 font-black rounded-lg transition uppercase shadow-md cursor-pointer flex items-center gap-1"
+                >
+                  <Check className="w-4 h-4" />
+                  Save Visual Branding
                 </button>
               </div>
             </form>
