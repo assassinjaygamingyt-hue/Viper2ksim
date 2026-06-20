@@ -97,6 +97,8 @@ export interface DBState {
   championships?: ChampionshipRecord[];
   teamHistories?: { [key: string]: TeamHistory };
   users?: ModUser[];
+  chatRooms?: ChatRoom[];
+  chatMessages?: ChatMessage[];
 }
 
 export interface ChampionshipRecord {
@@ -123,9 +125,31 @@ export interface ModUser {
   id: string;
   username: string;
   password?: string;
+  role?: string;
+  teamId?: string;
   permissions: {
     editHistory: boolean;
     editDrafts: boolean;
     editRosters: boolean;
   };
+}
+
+export interface ChatRoom {
+  id: string;
+  name: string;
+  type: 'general' | 'group';
+  memberIds: string[]; // Team IDs/abbrevs or 'admin', 'espn', etc.
+  createdById: string;
+  createdAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  roomId: string;
+  senderId: string; // e.g. "LAL", "MIA", "admin", "espn"
+  senderName: string;
+  senderLogo?: string;
+  senderColor?: string;
+  content: string;
+  timestamp: string;
 }

@@ -6,11 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import AdminPanel from './components/AdminPanel';
+import LeagueChat from './components/LeagueChat';
 import { Team, Player, NewsArticle, PowerRankingEntry, Trade, DraftResult, Award, ChampionshipRecord, TeamHistory, ModUser } from './types';
-import { renderLogo } from './utils';
+import { renderLogo, getTeamColor } from './utils';
 import {
   TrendingUp, Award as AwardIcon, Users, CalendarDays, ArrowLeftRight, Check, AlertTriangle,
-  Flame, Mail, Lock, Sparkles, ChevronRight, BarChart2, Radio, MapPin, Trophy, Shield, Info, Landmark, Globe, Activity
+  Flame, Mail, Lock, Sparkles, ChevronRight, BarChart2, Radio, MapPin, Trophy, Shield, Info, Landmark, Globe, Activity, Trash2
 } from 'lucide-react';
 import { championshipsData } from './data/championships';
 import { getTeamHistory } from './data/teamHistories';
@@ -40,11 +41,14 @@ export default function App() {
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [selectedAdminRole, setSelectedAdminRole] = useState<'Commissioner' | 'ESPN/News Outlet'>('Commissioner');
   const [loginError, setLoginError] = useState('');
   const [currentUser, setCurrentUser] = useState<{
     id?: string;
     username: string;
     role: 'admin' | 'mod';
+    teamId?: string;
+    subRole?: string;
     permissions: {
       editHistory: boolean;
       editDrafts: boolean;
@@ -245,7 +249,7 @@ export default function App() {
       const resp = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginUsername, password: adminPassword })
+        body: JSON.stringify({ username: loginUsername, password: adminPassword, requestedRole: selectedAdminRole })
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -273,6 +277,20 @@ export default function App() {
     setCurrentUser(null);
     setActiveTab('home');
     window.location.hash = '#/';
+  };
+
+  const handleDeleteChampionship = async (idOrYear: string) => {
+    if (!window.confirm('Are you sure you want to delete this championship record?')) return;
+    try {
+      const resp = await fetch(`/api/championships/${encodeURIComponent(idOrYear)}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to delete championship record.');
+      }
+      fetchDB();
+    } catch (err: any) {
+      alert(err.message || 'Error deleting championship');
+    }
   };
 
   // Helper: Click specific team logo -> jump to Team Page
@@ -724,15 +742,11 @@ export default function App() {
                       <th className="text-center">L</th>
                       <th className="text-center">PCT</th>
                       <th className="text-center">STREAK</th>
-                      <th className="text-center">PPG</th>
-                      <th className="text-center">OPP PPG</th>
-                      <th className="text-center">DIFF</th>
                     </tr>
                   </thead>
                   <tbody>
                     {getSortedTeams().map((t, idx) => {
                       const pct = t.wins + t.losses > 0 ? (t.wins / (t.wins + t.losses)).toFixed(3) : '.000';
-                      const diff = (t.ptsFor - t.ptsAgainst).toFixed(1);
                       return (
                         <tr key={t.id} className="border-b border-gray-850 hover:bg-gray-950/50 transition">
                           <td className="py-4.5 pl-2 font-bold text-gray-100 flex items-center gap-3.5">
@@ -764,11 +778,6 @@ export default function App() {
                             }`}>
                               {t.streak}
                             </span>
-                          </td>
-                          <td className="text-center font-mono text-gray-400 font-semibold text-xs">{t.ptsFor.toFixed(1)}</td>
-                          <td className="text-center font-mono text-gray-400 font-semibold text-xs">{t.ptsAgainst.toFixed(1)}</td>
-                          <td className={`text-center font-mono font-bold text-sm ${Number(diff) >= 0 ? 'text-green-400' : 'text-red-500'}`}>
-                            {Number(diff) > 0 ? `+${diff}` : diff}
                           </td>
                         </tr>
                       );
@@ -878,7 +887,7 @@ export default function App() {
                           {/* GRADIENT PANEL BANNER */}
                           <div
                             className="h-16 flex items-end justify-between px-4 pb-2 relative"
-                            style={{ backgroundImage: getBannerStyle(t.banner) }}
+                            style={{ backgroundColor: getTeamColor(t.abbrev) }}
                           >
                             <span className="absolute inset-0 bg-black/10"></span>
                             <span className="font-mono text-[10px] font-black text-white/80 z-10 bg-black/30 px-1.5 py-0.5 rounded font-bold">
@@ -943,7 +952,7 @@ export default function App() {
                   className={`rounded-3xl border border-gray-800 overflow-hidden relative shadow-2xl group transition-all duration-300 ${
                     isAdminLoggedIn ? 'cursor-pointer hover:border-amber-500/55' : ''
                   }`}
-                  style={{ backgroundImage: getBannerStyle(activeTeam.banner) }}
+                  style={{ backgroundColor: getTeamColor(activeTeam.abbrev) }}
                 >
                   {isAdminLoggedIn ? (
                     <div className="absolute inset-0 bg-black/40 group-hover:bg-black/55 backdrop-brightness-[0.85] transition-all duration-300 flex items-center justify-center">
@@ -1062,7 +1071,7 @@ export default function App() {
                   {teamSubTab === 'roster' && (
                     <>
                       {/* ACTIVE ROSTER PORTAL */}
-                      <div className="lg:col-span-8 bg-gray-900 border border-gray-850 rounded-2xl p-6 shadow-xl space-y-4 overflow-x-auto">
+                      <div className="lg:col-span-12 bg-gray-900 border border-gray-850 rounded-2xl p-6 shadow-xl space-y-4 overflow-x-auto">
                         <div className="flex items-center justify-between border-b border-gray-800 pb-3">
                           <h2 className="font-display font-black text-lg text-gray-100 flex items-center gap-2">
                             <Users className="w-5 h-5 text-red-500" />
@@ -1105,32 +1114,6 @@ export default function App() {
                             ))}
                           </tbody>
                         </table>
-                      </div>
-
-                      {/* SIDE PANEL: RECENT FORM */}
-                      <div className="lg:col-span-4 space-y-6">
-                        <div className="bg-gray-900 border border-gray-850 rounded-2xl p-6 shadow-xl space-y-4">
-                          <div className="flex justify-between items-center border-b border-gray-800 pb-3">
-                            <h3 className="font-display font-black text-sm text-gray-100 uppercase">RECENT TEAM FORM</h3>
-                            <span className="font-mono text-[9px] text-[#f59e0b] font-bold uppercase tracking-wider">League Stats</span>
-                          </div>
-                          <div className="space-y-3 font-mono text-[11px] text-gray-300">
-                            <div className="flex justify-between items-center py-2 bg-gray-950/50 px-3 rounded border border-gray-850">
-                              <span>Avg Points PPG Scored:</span>
-                              <span className="font-black text-white">{activeTeam?.ptsFor.toFixed(1)}</span>
-                            </div>
-                            <div className="flex justify-between items-center py-2 bg-gray-950/50 px-3 rounded border border-gray-850">
-                              <span>Avg Points Allowed:</span>
-                              <span className="font-black text-white">{activeTeam?.ptsAgainst.toFixed(1)}</span>
-                            </div>
-                            <div className="flex justify-between items-center py-2 bg-gray-950/50 px-3 rounded border border-gray-850">
-                              <span>Calculated Diff Margin:</span>
-                              <span className={`font-black ${(activeTeam?.ptsFor ?? 0) - (activeTeam?.ptsAgainst ?? 0) >= 0 ? 'text-green-400' : 'text-red-500'}`}>
-                                {((activeTeam?.ptsFor ?? 0) - (activeTeam?.ptsAgainst ?? 0)).toFixed(1)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     </>
                   )}
@@ -1210,7 +1193,7 @@ export default function App() {
                   {teamSubTab === 'news' && (
                     <>
                       {/* DETAILED BROADCASTS */}
-                      <div className="lg:col-span-8 bg-gray-900 border border-gray-850 rounded-2xl p-6 shadow-xl space-y-4">
+                      <div className="lg:col-span-12 bg-gray-900 border border-gray-850 rounded-2xl p-6 shadow-xl space-y-4">
                         <div className="flex justify-between items-center border-b border-gray-800 pb-3">
                           <h2 className="font-display font-black text-lg text-gray-100 flex items-center gap-2 uppercase">
                             <Radio className="w-5 h-5 text-red-500 animate-pulse" />
@@ -1240,26 +1223,6 @@ export default function App() {
                               No team news publications logged in this system.
                             </div>
                           )}
-                        </div>
-                      </div>
-
-                      {/* SIDE PANEL: RECENT FORM */}
-                      <div className="lg:col-span-4 space-y-6">
-                        <div className="bg-gray-900 border border-gray-850 rounded-16 p-6 shadow-xl space-y-4">
-                          <div className="flex justify-between items-center border-b border-gray-800 pb-3">
-                            <h3 className="font-display font-black text-sm text-gray-100 uppercase">RECENT TEAM FORM</h3>
-                            <span className="font-mono text-[9px] text-[#f59e0b] font-bold uppercase tracking-wider">League Stats</span>
-                          </div>
-                          <div className="space-y-3 font-mono text-[11px] text-gray-300">
-                            <div className="flex justify-between items-center py-2 bg-gray-950/50 px-3 rounded border border-gray-850">
-                              <span>Avg Points PPG Scored:</span>
-                              <span className="font-black text-white">{activeTeam?.ptsFor.toFixed(1)}</span>
-                            </div>
-                            <div className="flex justify-between items-center py-2 bg-gray-950/50 px-3 rounded border border-gray-850">
-                              <span>Avg Points Allowed:</span>
-                              <span className="font-black text-white">{activeTeam?.ptsAgainst.toFixed(1)}</span>
-                            </div>
-                          </div>
                         </div>
                       </div>
                     </>
@@ -1518,75 +1481,95 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {(championships && championships.length > 0 ? championships : championshipsData).map((champ) => {
-                  const winnerTeam = teams.find(t => t.id === champ.championKey || t.abbrev === champ.championKey);
-                  const runnerUpTeam = teams.find(t => t.id === champ.runnerUpKey || t.abbrev === champ.runnerUpKey);
+                {championships.length === 0 ? (
+                  <div className="text-center py-12 bg-gray-905 border border-gray-850 rounded-3xl text-gray-550 font-mono text-xs col-span-2">
+                    No logged championship titles found. Administrators can record historic titles inside the Admin Room.
+                  </div>
+                ) : (
+                  championships.map((champ) => {
+                    const winnerTeam = teams.find(t => t.id === champ.championKey || t.abbrev === champ.championKey);
+                    const runnerUpTeam = teams.find(t => t.id === champ.runnerUpKey || t.abbrev === champ.runnerUpKey);
 
-                  return (
-                    <div
-                      key={champ.id || champ.year}
-                      className="bg-gray-905 border border-gray-850 hover:border-gray-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between space-y-4 transition hover:-translate-y-0.5 duration-200"
-                    >
-                      <div className="flex justify-between items-center bg-gray-950/60 p-3 rounded-2xl border border-gray-850">
-                        <span className="font-mono text-xs font-black text-amber-500 flex items-center gap-1.5">
-                          🏆 {champ.year} CHAMPION
-                        </span>
-                        <span className="font-mono text-[10px] text-gray-400 bg-gray-900 border border-gray-800 px-2.5 py-0.5 rounded-lg">
-                          Result: {champ.result}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 my-2">
-                        {/* CHAMPION */}
-                        <div className="flex flex-col items-center p-3.5 bg-gray-950/20 rounded-2xl border border-gray-850 justify-center text-center">
-                          <span
-                            onClick={() => winnerTeam && handleTeamClick(winnerTeam.id)}
-                            className="w-14 h-14 flex items-center justify-center bg-gray-950 hover:bg-gray-905 rounded-2xl border border-gray-800 shadow-md cursor-pointer transition mb-2"
-                          >
-                            {winnerTeam ? renderLogo(winnerTeam.logo, "w-10 h-10 object-contain") : <span className="text-2xl">🏆</span>}
+                    return (
+                      <div
+                        key={champ.id || champ.year}
+                        className="bg-gray-905 border border-gray-850 hover:border-gray-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between space-y-4 transition hover:-translate-y-0.5 duration-200"
+                      >
+                        <div className="flex justify-between items-center bg-gray-950/60 p-3 rounded-2xl border border-gray-850">
+                          <span className="font-mono text-xs font-black text-amber-500 flex items-center gap-1.5">
+                            🏆 {champ.year} CHAMPION
                           </span>
-                          <span className="text-[9px] font-mono font-bold text-gray-400 uppercase tracking-wider mb-1">CHAMPION</span>
-                          <span className="font-bold text-xs text-gray-100 max-w-xs truncate leading-snug">{champ.champion}</span>
-                        </div>
-
-                        {/* RUNNER UP */}
-                        <div className="flex flex-col items-center p-3.5 bg-gray-950/20 rounded-2xl border border-gray-850 justify-center text-center">
-                          <span
-                            onClick={() => runnerUpTeam && handleTeamClick(runnerUpTeam.id)}
-                            className="w-14 h-14 flex items-center justify-center bg-gray-950 hover:bg-gray-955 rounded-2xl border border-gray-800 shadow-md cursor-pointer transition mb-2"
-                          >
-                            {runnerUpTeam ? renderLogo(runnerUpTeam.logo, "w-10 h-10 object-contain") : <span className="text-2xl">🥈</span>}
+                          <span className="font-mono text-[10px] text-gray-400 bg-gray-900 border border-gray-800 px-2.5 py-0.5 rounded-lg">
+                            Result: {champ.result}
                           </span>
-                          <span className="text-[9px] font-mono font-bold text-[#94a3b8] uppercase tracking-wider mb-1">RUNNER-UP</span>
-                          <span className="font-bold text-xs text-gray-100 max-w-xs truncate leading-snug">{champ.runnerUp}</span>
                         </div>
-                      </div>
 
-                      {/* FINALS MVP SECTION */}
-                      <div className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl space-y-2">
-                        <div className="flex items-center gap-1.5 text-xs text-[#f59e0b] font-mono uppercase tracking-wider font-bold">
-                          <Trophy className="w-4 h-4 text-amber-500" />
-                          <span>Finals MVP (FMVP)</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span
-                            onClick={() => handlePlayerClick(champ.fmvpName, champ.championKey)}
-                            className="font-bold text-sm text-gray-200 border-b border-dotted border-amber-500/40 hover:text-amber-400 transition cursor-pointer"
-                          >
-                            {champ.fmvpName}
-                          </span>
-                          <span className="font-mono text-[10px] text-gray-400 font-bold uppercase">{champ.fmvpStats}</span>
-                        </div>
-                      </div>
+                        <div className="grid grid-cols-2 gap-4 my-2">
+                          {/* CHAMPION */}
+                          <div className="flex flex-col items-center p-3.5 bg-gray-950/20 rounded-2xl border border-gray-850 justify-center text-center">
+                            <span
+                              onClick={() => winnerTeam && handleTeamClick(winnerTeam.id)}
+                              className="w-14 h-14 flex items-center justify-center bg-gray-955 hover:bg-gray-950 rounded-2xl border border-gray-800 shadow-md cursor-pointer transition mb-2"
+                            >
+                              {winnerTeam ? renderLogo(winnerTeam.logo, "w-10 h-10 object-contain") : <span className="text-2xl">🏆</span>}
+                            </span>
+                            <span className="text-[9px] font-mono font-bold text-gray-400 uppercase tracking-wider mb-1">CHAMPION</span>
+                            <span className="font-bold text-xs text-gray-100 max-w-xs truncate leading-snug">{champ.champion}</span>
+                          </div>
 
-                      {/* MOMENT HIGHLIGHT */}
-                      <p className="text-[11px] text-gray-400 leading-relaxed font-sans bg-gray-950/35 p-3.5 rounded-xl border border-gray-850">
-                        <span className="text-gray-350 font-bold block mb-1">Historical Recap:</span>
-                        {champ.highlight}
-                      </p>
-                    </div>
-                  );
-                })}
+                          {/* RUNNER UP */}
+                          <div className="flex flex-col items-center p-3.5 bg-gray-950/20 rounded-2xl border border-gray-850 justify-center text-center">
+                            <span
+                              onClick={() => runnerUpTeam && handleTeamClick(runnerUpTeam.id)}
+                              className="w-14 h-14 flex items-center justify-center bg-gray-955 hover:bg-gray-950 rounded-2xl border border-gray-800 shadow-md cursor-pointer transition mb-2"
+                            >
+                              {runnerUpTeam ? renderLogo(runnerUpTeam.logo, "w-10 h-10 object-contain") : <span className="text-2xl">🥈</span>}
+                            </span>
+                            <span className="text-[9px] font-mono font-bold text-[#94a3b8] uppercase tracking-wider mb-1">RUNNER-UP</span>
+                            <span className="font-bold text-xs text-gray-100 max-w-xs truncate leading-snug">{champ.runnerUp}</span>
+                          </div>
+                        </div>
+
+                        {/* FINALS MVP SECTION */}
+                        <div className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl space-y-2">
+                          <div className="flex items-center gap-1.5 text-xs text-[#f59e0b] font-mono uppercase tracking-wider font-bold">
+                            <Trophy className="w-4 h-4 text-amber-500" />
+                            <span>Finals MVP (FMVP)</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span
+                              onClick={() => handlePlayerClick(champ.fmvpName, champ.championKey)}
+                              className="font-bold text-sm text-gray-200 border-b border-dotted border-amber-500/40 hover:text-amber-400 transition cursor-pointer"
+                            >
+                              {champ.fmvpName}
+                            </span>
+                            <span className="font-mono text-[10px] text-gray-400 font-bold uppercase">{champ.fmvpStats}</span>
+                          </div>
+                        </div>
+
+                        {/* MOMENT HIGHLIGHT */}
+                        <p className="text-[11px] text-gray-400 leading-relaxed font-sans bg-gray-950/35 p-3.5 rounded-xl border border-gray-850">
+                          <span className="text-gray-350 font-bold block mb-1">Historical Recap:</span>
+                          {champ.highlight}
+                        </p>
+
+                        {/* HOVER ACTION TO QUICKLY DELETE ON FALSE LOGS */}
+                        {(isAdminLoggedIn && (currentUser?.role === 'admin' || currentUser?.permissions?.editHistory === true)) && (
+                          <div className="border-t border-gray-850/60 pt-3 flex justify-end">
+                            <button
+                              onClick={() => handleDeleteChampionship(champ.id || champ.year)}
+                              className="bg-red-950/40 hover:bg-red-900/50 border border-red-500/30 hover:border-red-500 text-red-500 hover:text-red-400 rounded-xl px-4 py-2 text-[10px] font-mono font-bold uppercase transition flex items-center justify-center gap-1 cursor-pointer w-full"
+                              title="Delete Record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete Championship (Mistype Fix)
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           )}
@@ -1605,7 +1588,7 @@ export default function App() {
                   {/* GRADIENT ACCENT HEADER WITH OVERALL AND PROFILE BADGES */}
                   <div
                     className="h-32 p-6 flex flex-col justify-end relative"
-                    style={{ backgroundImage: playerTeam?.banner || 'radial-gradient(circle at top right, #1e1b4b, #030712)' }}
+                    style={{ backgroundColor: getTeamColor(playerTeam?.abbrev) }}
                   >
                     <div className="absolute inset-0 bg-black/30"></div>
                     <button
@@ -1738,6 +1721,18 @@ export default function App() {
               </div>
             )
           )}
+
+          {/* =================================================================== */}
+          {/* 9.5 LEAGUE MESSAGING TAB */}
+          {/* =================================================================== */}
+          {activeTab === 'messaging' && (
+            <LeagueChat
+              teams={teams}
+              currentUser={currentUser}
+              isAdminLoggedIn={isAdminLoggedIn}
+              onOpenLogin={() => setLoginModalOpen(true)}
+            />
+          )}
         </>
       )}
 
@@ -1756,6 +1751,18 @@ export default function App() {
             </p>
 
             <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Requested Session Role (Admin Only)</label>
+                <select
+                  value={selectedAdminRole}
+                  onChange={(e) => setSelectedAdminRole(e.target.value as any)}
+                  className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none transition cursor-pointer font-sans"
+                >
+                  <option value="Commissioner">Commissioner (Full Sovereign Access)</option>
+                  <option value="ESPN/News Outlet">ESPN/News Outlet (Restricted Roster Access)</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Username</label>
                 <div className="relative">
@@ -1828,7 +1835,7 @@ export default function App() {
             {/* COMPOSITE BRAND HEADER PREVIEW */}
             <div
               className="h-32 p-6 flex flex-col justify-end relative transition-all duration-300"
-              style={{ backgroundImage: getBannerStyle(brandingForm.banner) }}
+              style={{ backgroundColor: getTeamColor(brandingForm.abbrev) }}
             >
               <div className="absolute inset-0 bg-black/45"></div>
               <button

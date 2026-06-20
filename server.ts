@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
+import { WebSocketServer } from 'ws';
 import { DBState, Team, Player, NewsArticle, PowerRankingEntry, Trade, DraftResult, Award, ChampionshipRecord, TeamHistory, ModUser } from './src/types.js';
 import { championshipsData } from './src/data/championships.js';
 import { detailedTeamHistories } from './src/data/teamHistories.js';
@@ -114,6 +115,26 @@ function loadDB() {
       });
     }
 
+    // Populate empty chat arrays if not present
+    if (!dbState.chatRooms) {
+      dbState.chatRooms = [
+        {
+          id: 'room-general',
+          name: 'General Federation Lobby',
+          type: 'general',
+          memberIds: ['admin', 'commissioner', 'espn'],
+          createdById: 'system',
+          createdAt: new Date().toISOString()
+        }
+      ];
+      modified = true;
+    }
+
+    if (!dbState.chatMessages) {
+      dbState.chatMessages = [];
+      modified = true;
+    }
+
     // Auto-assign high-res official NBA logo URLs if current logo is blank or an emoji
     if (dbState.teams && dbState.teams.length > 0) {
       dbState.teams.forEach(t => {
@@ -195,21 +216,23 @@ app.use(express.json({ limit: '10mb' }));
 
 // 1. Authenticate Admin Session
 app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, requestedRole } = req.body;
 
   // Check if super administrator
   if (password === 'viper2ksimadmin' || password === 'admin') {
     if (!username || username === 'admin' || username === 'Administrator') {
+      const isESPN = requestedRole === 'ESPN/News Outlet';
       return res.json({
         success: true,
         token: 'viper-session-super-token-99824',
         user: {
-          username: 'admin',
+          username: username || 'admin',
           role: 'admin',
+          subRole: isESPN ? 'ESPN/News Outlet' : 'Commissioner',
           permissions: {
             editHistory: true,
             editDrafts: true,
-            editRosters: true
+            editRosters: !isESPN
           }
         }
       });
@@ -230,6 +253,8 @@ app.post('/api/login', (req, res) => {
         id: foundMod.id,
         username: foundMod.username,
         role: 'mod',
+        subRole: foundMod.role || 'Team Owner',
+        teamId: foundMod.teamId,
         permissions: foundMod.permissions
       }
     });
@@ -644,7 +669,7 @@ app.delete('/api/championships/:id', (req, res) => {
   const champId = req.params.id;
   if (!dbState.championships) dbState.championships = [];
   const originalLength = dbState.championships.length;
-  dbState.championships = dbState.championships.filter(c => c.id !== champId);
+  dbState.championships = dbState.championships.filter(c => c.id !== champId && String(c.year) !== champId);
   if (dbState.championships.length === originalLength) {
     return res.status(404).json({ error: 'Championship record not found.' });
   }
@@ -672,16 +697,31 @@ app.put('/api/team_histories/:teamId', (req, res) => {
 // 14. Mod Users API
 app.post('/api/users', (req, res) => {
   const newUser: ModUser = req.body;
-  if (!newUser.username || !newUser.password) {
-    return res.status(400).json({ error: 'Username and password are required.' });
+  if (!newUser.password) {
+    return res.status(400).json({ error: 'Password is required.' });
   }
   newUser.id = `mod-${Date.now()}`;
+  newUser.role = newUser.role || 'Team Owner';
   newUser.permissions = newUser.permissions || { editHistory: false, editDrafts: false, editRosters: false };
+  newUser.teamId = newUser.teamId || '';
 
   if (!dbState.users) dbState.users = [];
+
+  // Auto override username to Team Name if they are a Team Owner and team is selected
+  if (newUser.role === 'Team Owner' && newUser.teamId) {
+    const team = dbState.teams.find(t => t.id === newUser.teamId);
+    if (team) {
+      newUser.username = team.name;
+    }
+  }
+
+  if (!newUser.username) {
+    return res.status(400).json({ error: 'Username is required (or assign a team to auto-generate from team name).' });
+  }
+
   // Prevent duplicate usernames
   if (dbState.users.some(u => u.username.toLowerCase() === newUser.username.toLowerCase())) {
-    return res.status(400).json({ error: 'Username is already taken.' });
+    return res.status(400).json({ error: `The username or team owner seat for "${newUser.username}" is already assigned/taken.` });
   }
 
   dbState.users.push(newUser);
@@ -699,10 +739,29 @@ app.put('/api/users/:id', (req, res) => {
     return res.status(404).json({ error: 'User not found.' });
   }
 
+  const role = updated.role || dbState.users[userIdx].role || 'Team Owner';
+  const teamId = updated.teamId !== undefined ? updated.teamId : (dbState.users[userIdx].teamId || '');
+  let username = updated.username || dbState.users[userIdx].username;
+
+  // Auto override username to Team Name if role is Team Owner and a team is selected
+  if (role === 'Team Owner' && teamId) {
+    const team = dbState.teams.find(t => t.id === teamId);
+    if (team) {
+      username = team.name;
+    }
+  }
+
+  // Prevent duplicate usernames (excluding self)
+  if (dbState.users.some(u => u.id !== userId && u.username.toLowerCase() === username.toLowerCase())) {
+    return res.status(400).json({ error: `The username or team owner seat for "${username}" is already assigned/taken.` });
+  }
+
   dbState.users[userIdx] = {
     ...dbState.users[userIdx],
-    username: updated.username || dbState.users[userIdx].username,
+    username,
     password: updated.password || dbState.users[userIdx].password,
+    role,
+    teamId,
     permissions: updated.permissions || dbState.users[userIdx].permissions
   };
 
@@ -722,6 +781,93 @@ app.delete('/api/users/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// 15. Chat & Messaging API
+app.get('/api/chats/rooms', (req, res) => {
+  if (!dbState.chatRooms) {
+    dbState.chatRooms = [
+      {
+        id: 'room-general',
+        name: 'General Federation Lobby',
+        type: 'general',
+        memberIds: ['admin', 'commissioner', 'espn'],
+        createdById: 'system',
+        createdAt: new Date().toISOString()
+      }
+    ];
+  }
+  res.json(dbState.chatRooms);
+});
+
+app.get('/api/chats/messages', (req, res) => {
+  if (!dbState.chatMessages) dbState.chatMessages = [];
+  res.json(dbState.chatMessages);
+});
+
+app.post('/api/chats/rooms', (req, res) => {
+  const { name, type, memberIds, createdById } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'Chat room name is required.' });
+  }
+  if (!dbState.chatRooms) dbState.chatRooms = [];
+
+  const newRoom = {
+    id: `room-${Date.now()}`,
+    name,
+    type: type || 'group',
+    memberIds: Array.isArray(memberIds) ? memberIds : [],
+    createdById: createdById || 'unknown',
+    createdAt: new Date().toISOString()
+  };
+
+  dbState.chatRooms.push(newRoom);
+  saveDB();
+
+  broadcastToAll({ type: 'room_created', room: newRoom });
+
+  res.status(201).json(newRoom);
+});
+
+app.post('/api/chats/messages', (req, res) => {
+  const { roomId, senderId, senderName, senderLogo, senderColor, content } = req.body;
+  if (!roomId || !content) {
+    return res.status(400).json({ error: 'Room ID and message content are required.' });
+  }
+  if (!dbState.chatMessages) dbState.chatMessages = [];
+
+  const newMessage = {
+    id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    roomId,
+    senderId,
+    senderName,
+    senderLogo,
+    senderColor,
+    content,
+    timestamp: new Date().toISOString()
+  };
+
+  dbState.chatMessages.push(newMessage);
+  saveDB();
+
+  broadcastToAll({ type: 'message', message: newMessage });
+
+  res.status(201).json(newMessage);
+});
+
+// Active WebSocket Clients
+const wsClients = new Set<any>();
+
+function broadcastToAll(payload: any) {
+  const data = JSON.stringify(payload);
+  for (const client of wsClients) {
+    if (client.readyState === 1) { // OPEN
+      try {
+        client.send(data);
+      } catch (err) {
+        console.error('Failed to send to client:', err);
+      }
+    }
+  }
+}
 
 
 // ----------------------------------------------------
@@ -746,8 +892,68 @@ async function startServer() {
     console.log('Serving production static assets from', distPath);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Viper2kSim Server successfully running on http://localhost:${PORT}`);
+  });
+
+  // Setup WebSocket Server bound to same HTTP server
+  const wss = new WebSocketServer({ server });
+  wss.on('connection', (ws) => {
+    wsClients.add(ws);
+    
+    // Send immediate connection acknowledgement
+    ws.send(JSON.stringify({ type: 'connected' }));
+
+    ws.on('message', (messageBuffer) => {
+      try {
+        const payload = JSON.parse(messageBuffer.toString());
+        if (payload.type === 'message') {
+          const msgData = payload.message;
+          if (msgData && msgData.roomId && msgData.content) {
+            const newMessage = {
+              id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              roomId: msgData.roomId,
+              senderId: msgData.senderId,
+              senderName: msgData.senderName,
+              senderLogo: msgData.senderLogo,
+              senderColor: msgData.senderColor,
+              content: msgData.content,
+              timestamp: new Date().toISOString()
+            };
+            if (!dbState.chatMessages) dbState.chatMessages = [];
+            dbState.chatMessages.push(newMessage);
+            saveDB();
+            broadcastToAll({ type: 'message', message: newMessage });
+          }
+        } else if (payload.type === 'room_created') {
+          const roomData = payload.room;
+          if (roomData && roomData.name) {
+            const newRoom = {
+              id: `room-${Date.now()}`,
+              name: roomData.name,
+              type: roomData.type || 'group',
+              memberIds: Array.isArray(roomData.memberIds) ? roomData.memberIds : [],
+              createdById: roomData.createdById || 'unknown',
+              createdAt: new Date().toISOString()
+            };
+            if (!dbState.chatRooms) dbState.chatRooms = [];
+            dbState.chatRooms.push(newRoom);
+            saveDB();
+            broadcastToAll({ type: 'room_created', room: newRoom });
+          }
+        }
+      } catch (err) {
+        console.error('WebSocket incoming frame error:', err);
+      }
+    });
+
+    ws.on('close', () => {
+      wsClients.delete(ws);
+    });
+
+    ws.on('error', () => {
+      wsClients.delete(ws);
+    });
   });
 }
 

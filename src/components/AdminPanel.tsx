@@ -23,6 +23,7 @@ interface AdminPanelProps {
     id?: string;
     username: string;
     role: 'admin' | 'mod';
+    subRole?: string;
     permissions: {
       editHistory: boolean;
       editDrafts: boolean;
@@ -57,7 +58,8 @@ export default function AdminPanel({
   };
 
   // Helper checks for mod permissions
-  const canEditRosters = currentUser?.role === 'admin' || currentUser?.permissions?.editRosters === true;
+  const isESPNAdmin = currentUser?.subRole === 'ESPN/News Outlet';
+  const canEditRosters = (currentUser?.role === 'admin' && !isESPNAdmin) || currentUser?.permissions?.editRosters === true;
   const canEditDrafts = currentUser?.role === 'admin' || currentUser?.permissions?.editDrafts === true;
   const canEditHistory = currentUser?.role === 'admin' || currentUser?.permissions?.editHistory === true;
 
@@ -132,6 +134,8 @@ export default function AdminPanel({
   const [modForm, setModForm] = useState({
     username: '',
     password: '',
+    role: 'Team Owner',
+    teamId: '',
     editHistory: false,
     editDrafts: false,
     editRosters: false
@@ -854,12 +858,15 @@ export default function AdminPanel({
     }
   };
 
-  const handleDeleteChampionship = async (id: string) => {
+  const handleDeleteChampionship = async (idOrYear: string) => {
     if (!window.confirm('Are you sure you want to delete this championship record?')) return;
     try {
-      const resp = await fetch(`/api/championships/${id}`, { method: 'DELETE' });
-      if (!resp.ok) throw new Error('Failed to delete championship record.');
-      showAlert('Championship record deleted.');
+      const resp = await fetch(`/api/championships/${encodeURIComponent(idOrYear)}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to delete championship record.');
+      }
+      showAlert('Championship record deleted successfully.');
       onRefreshDB();
     } catch (err: any) {
       showAlert(err.message, 'error');
@@ -917,11 +924,16 @@ export default function AdminPanel({
   // ---------------------------------------------------------------------------
   const handleAddModUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modForm.username || !modForm.password) return showAlert('Missing username or password!', 'error');
+    if (modForm.role !== 'Team Owner' && !modForm.username) {
+      return showAlert('Username is required for non-owner roles.', 'error');
+    }
+    if (!modForm.password) return showAlert('Missing password!', 'error');
     try {
       const payload = {
         username: modForm.username,
         password: modForm.password,
+        role: modForm.role,
+        teamId: modForm.role === 'Team Owner' ? modForm.teamId : '',
         permissions: {
           editHistory: modForm.editHistory,
           editDrafts: modForm.editDrafts,
@@ -937,8 +949,8 @@ export default function AdminPanel({
         const err = await resp.json();
         throw new Error(err.error || 'Failed to register moderator.');
       }
-      showAlert(`Moderator "${modForm.username}" registered successfully!`);
-      setModForm({ username: '', password: '', editHistory: false, editDrafts: false, editRosters: false });
+      showAlert(`Moderator seating saved successfully!`);
+      setModForm({ username: '', password: '', role: 'Team Owner', teamId: '', editHistory: false, editDrafts: false, editRosters: false });
       onRefreshDB();
     } catch (err: any) {
       showAlert(err.message, 'error');
@@ -950,6 +962,8 @@ export default function AdminPanel({
     setModForm({
       username: u.username,
       password: u.password || '',
+      role: u.role || 'Team Owner',
+      teamId: u.teamId || '',
       editHistory: u.permissions?.editHistory || false,
       editDrafts: u.permissions?.editDrafts || false,
       editRosters: u.permissions?.editRosters || false
@@ -959,11 +973,16 @@ export default function AdminPanel({
   const handleUpdateModUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingModId) return;
-    if (!modForm.username || !modForm.password) return showAlert('Missing username or password!', 'error');
+    if (modForm.role !== 'Team Owner' && !modForm.username) {
+      return showAlert('Username is required for non-owner roles.', 'error');
+    }
+    if (!modForm.password) return showAlert('Missing password!', 'error');
     try {
       const payload = {
         username: modForm.username,
         password: modForm.password,
+        role: modForm.role,
+        teamId: modForm.role === 'Team Owner' ? modForm.teamId : '',
         permissions: {
           editHistory: modForm.editHistory,
           editDrafts: modForm.editDrafts,
@@ -979,9 +998,9 @@ export default function AdminPanel({
         const err = await resp.json();
         throw new Error(err.error || 'Failed to update moderator account.');
       }
-      showAlert(`Moderator account "${modForm.username}" updated successfully!`);
+      showAlert(`Moderator configuration updated successfully!`);
       setEditingModId(null);
-      setModForm({ username: '', password: '', editHistory: false, editDrafts: false, editRosters: false });
+      setModForm({ username: '', password: '', role: 'Team Owner', teamId: '', editHistory: false, editDrafts: false, editRosters: false });
       onRefreshDB();
     } catch (err: any) {
       showAlert(err.message, 'error');
@@ -996,7 +1015,7 @@ export default function AdminPanel({
       showAlert('Moderator user deleted.');
       if (editingModId === id) {
         setEditingModId(null);
-        setModForm({ username: '', password: '', editHistory: false, editDrafts: false, editRosters: false });
+        setModForm({ username: '', password: '', role: 'Team Owner', teamId: '', editHistory: false, editDrafts: false, editRosters: false });
       }
       onRefreshDB();
     } catch (err: any) {
@@ -2365,11 +2384,12 @@ export default function AdminPanel({
                                 Edit
                               </button>
                               <button
-                                onClick={() => c.id && handleDeleteChampionship(c.id)}
-                                className="p-1 text-red-500 hover:text-red-400 rounded bg-gray-900 border border-gray-800 hover:bg-red-950/30 transition cursor-pointer"
+                                onClick={() => handleDeleteChampionship(c.id || c.year)}
+                                className="p-1 px-2.5 text-[10px] font-mono font-bold uppercase rounded bg-red-950/40 border border-red-500/35 text-red-500 hover:text-red-400 hover:bg-red-900/50 transition cursor-pointer flex items-center gap-1"
                                 title="Delete Record"
                               >
                                 <Trash2 className="w-3 h-3" />
+                                Delete
                               </button>
                             </div>
                           )}
@@ -2671,20 +2691,77 @@ export default function AdminPanel({
                     {editingModId ? 'Edit Moderator Account' : 'Register Moderator Account'}
                   </h3>
                   <p className="text-[11px] text-gray-400 mt-1">
-                    {editingModId ? 'Modify active moderator privileges and credentials below.' : 'Provision localized mod credentials. You must explicitly select which core operations they are cleared for.'}
+                    {editingModId ? 'Modify active moderator privileges and credentials below.' : 'Provision localized mod credentials. Specify roles and select granted operational parameters.'}
                   </p>
                 </div>
 
                 <form onSubmit={editingModId ? handleUpdateModUser : handleAddModUser} className="space-y-4 text-xs">
                   <div>
-                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">USERNAME</label>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">MODERATOR ROLE</label>
+                    <select
+                      value={modForm.role}
+                      onChange={(e) => {
+                        const newRole = e.target.value;
+                        setModForm({
+                          ...modForm,
+                          role: newRole,
+                          // Clear teamId if not Team Owner
+                          teamId: newRole === 'Team Owner' ? modForm.teamId : '',
+                          username: newRole === 'Team Owner' && modForm.teamId ? (teams.find(t => t.id === modForm.teamId)?.name || modForm.username) : modForm.username
+                        });
+                      }}
+                      className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-sans cursor-pointer"
+                    >
+                      <option value="Team Owner">Team Owner</option>
+                      <option value="League Moderator">League Moderator</option>
+                      <option value="ESPN/News Outlet">ESPN/News Outlet</option>
+                    </select>
+                  </div>
+
+                  {modForm.role === 'Team Owner' && (
+                    <div className="bg-amber-950/20 border border-amber-500/15 p-3 rounded-lg space-y-2">
+                      <label className="block text-amber-400 font-bold font-mono text-[10px] uppercase">
+                        ASSIGNED FRANCHISE TEAM
+                      </label>
+                      <select
+                        value={modForm.teamId}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const matchedTeam = teams.find(t => t.id === val);
+                          setModForm({
+                            ...modForm,
+                            teamId: val,
+                            username: matchedTeam ? matchedTeam.name : ''
+                          });
+                        }}
+                        required={modForm.role === 'Team Owner'}
+                        className="w-full bg-gray-900 border border-amber-500/30 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-sans cursor-pointer"
+                      >
+                        <option value="">-- Choose Franchise Team --</option>
+                        {teams.map(t => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} ({t.abbrev})
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-gray-400 leading-normal font-mono">
+                        💡 Once assigned, their username automatically changes to the team's full name, and they chat representing that franchise!
+                      </p>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">
+                      USERNAME {modForm.role === 'Team Owner' && modForm.teamId && ' (SET TO TEAM NAME)'}
+                    </label>
                     <input
                       type="text"
                       required
-                      placeholder="e.g. suns_moderator"
+                      disabled={modForm.role === 'Team Owner' && !!modForm.teamId}
+                      placeholder={modForm.role === 'Team Owner' && modForm.teamId ? 'Auto-assigned to team name' : 'e.g. suns_moderator'}
                       value={modForm.username}
                       onChange={(e) => setModForm({ ...modForm, username: e.target.value.toLowerCase().replace(/\s+/g, '') })}
-                      className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-mono"
+                      className={`w-full bg-gray-900 border ${modForm.role === 'Team Owner' && modForm.teamId ? 'border-amber-500/25 text-amber-400 font-bold bg-amber-500/5' : 'border-gray-800 focus:border-amber-500'} rounded-lg p-2.5 outline-none font-mono`}
                     />
                   </div>
 
@@ -2758,7 +2835,7 @@ export default function AdminPanel({
                         type="button"
                         onClick={() => {
                           setEditingModId(null);
-                          setModForm({ username: '', password: '', editHistory: false, editDrafts: false, editRosters: false });
+                          setModForm({ username: '', password: '', role: 'Team Owner', editHistory: false, editDrafts: false, editRosters: false });
                         }}
                         className="px-4 py-2.5 bg-gray-800 hover:bg-gray-750 text-gray-300 font-bold rounded-lg text-xs transition uppercase cursor-pointer"
                       >
@@ -2781,17 +2858,27 @@ export default function AdminPanel({
                 <div className="grid grid-cols-1 gap-3 max-h-[75vh] overflow-y-auto pr-1">
                   {users.map(u => {
                     const isCurrentUser = currentUser?.username === u.username;
+                    const assignedTeam = u.teamId ? teams.find(t => t.id === u.teamId) : null;
 
                     return (
                       <div key={u.id || u.username} className="bg-gray-950/30 border border-gray-850 rounded-2xl p-5 flex items-center justify-between transition-all">
                         <div className="space-y-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-bold text-sm text-gray-100 font-mono">
                               {u.username}
                             </span>
                             
-                            <span className="text-[9px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded uppercase">
-                              Assigned Moderator
+                            {assignedTeam && (
+                              <div className="flex items-center gap-1.5 bg-amber-500/10 text-amber-400 border border-amber-500/25 px-2 py-0.5 rounded-full text-[9px] font-bold font-mono">
+                                {assignedTeam.logo && (
+                                  <img src={assignedTeam.logo} alt="" className="w-3.5 h-3.5 object-contain" referrerPolicy="no-referrer" />
+                                )}
+                                <span>{assignedTeam.abbrev} REPRESENTATIVE</span>
+                              </div>
+                            )}
+
+                            <span className="text-[9px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded uppercase" title="Moderator Custom Role">
+                              {u.role || 'Team Owner'}
                             </span>
 
                             {isCurrentUser && (

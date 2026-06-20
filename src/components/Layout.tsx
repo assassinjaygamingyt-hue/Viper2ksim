@@ -4,11 +4,11 @@
  */
 
 import { useState, useEffect, ReactNode } from 'react';
-import { Menu, X, ShieldAlert, Cpu, Award as AwardIcon, Users, RefreshCw, BarChart2, Radio, CalendarDays, ArrowLeftRight, Trophy } from 'lucide-react';
+import { Menu, X, ShieldAlert, Cpu, Award as AwardIcon, Users, RefreshCw, BarChart2, Radio, CalendarDays, ArrowLeftRight, Trophy, MessageSquare } from 'lucide-react';
 import { Team } from '../types';
 import { renderLogo } from '../utils';
 // @ts-ignore
-import viperProfile from '../assets/images/viper_profile_1781873598030.jpg';
+import viperProfile from '../assets/images/viper_profile_1781995362326.jpg';
 
 interface LayoutProps {
   children: ReactNode;
@@ -19,6 +19,17 @@ interface LayoutProps {
   isAdminLoggedIn: boolean;
   onLogout: () => void;
   onOpenLogin: () => void;
+  currentUser?: {
+    id?: string;
+    username: string;
+    role: 'admin' | 'mod';
+    subRole?: string;
+    permissions: {
+      editHistory: boolean;
+      editDrafts: boolean;
+      editRosters: boolean;
+    };
+  } | null;
 }
 
 export default function Layout({
@@ -29,7 +40,8 @@ export default function Layout({
   onTeamClick,
   isAdminLoggedIn,
   onLogout,
-  onOpenLogin
+  onOpenLogin,
+  currentUser
 }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -60,6 +72,7 @@ export default function Layout({
     { id: 'draft', label: 'Draft History', icon: CalendarDays },
     { id: 'awards', label: 'Awards', icon: AwardIcon },
     { id: 'championships', label: 'Championships', icon: Trophy },
+    { id: 'messaging', label: 'League Chat', icon: MessageSquare },
   ];
 
   return (
@@ -157,14 +170,19 @@ export default function Layout({
                       setActiveTab('admin');
                       window.location.hash = '#/admin';
                     }}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-md border flex items-center gap-1 cursor-pointer transition ${
+                    className={`px-3 py-1 text-xs font-semibold rounded-md border flex items-center gap-2 cursor-pointer transition ${
                       activeTab === 'admin'
                         ? 'bg-amber-500 border-amber-500 text-gray-950 shadow-lg'
                         : 'bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500 hover:text-gray-950'
                     }`}
                   >
-                    <ShieldAlert className="w-3.5 h-3.5" />
-                    Admin Active
+                    <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
+                    <div className="flex flex-col items-start leading-none text-left">
+                      <span className="font-bold text-[11px] mb-0.5">{currentUser?.username || 'Admin'}</span>
+                      <span className="text-[8px] opacity-80 uppercase font-mono font-black tracking-wider">
+                        {currentUser?.subRole || (currentUser?.role === 'admin' ? 'Commissioner' : 'Team Owner')}
+                      </span>
+                    </div>
                   </button>
                   <button
                      onClick={onLogout}
