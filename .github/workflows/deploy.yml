@@ -1,0 +1,38 @@
+# Automatic static build and deployment pipeline for GitHub Pages
+name: Deploy Viper2kSim Static Hub
+
+on:
+  push:
+    branches:
+      - main # Trigger compilation and deployment on changes to the main branch
+
+permissions:
+  contents: write # Needed to push build outputs to the gh-pages branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Base Dependencies
+        run: npm ci
+
+      - name: Build Static App File Bundle
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Deploy static assets inside gh-pages branch
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages # Deploys contents directly into gh-pages branch
+          folder: dist # The directory that Vite builds static assets to
+          clean: true # Automatically clear obsolete files to keep build small

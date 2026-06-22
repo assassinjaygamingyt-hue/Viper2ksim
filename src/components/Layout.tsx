@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, ReactNode } from 'react';
-import { Menu, X, ShieldAlert, Cpu, Award as AwardIcon, Users, RefreshCw, BarChart2, Radio, CalendarDays, ArrowLeftRight, Trophy, MessageSquare } from 'lucide-react';
+import { Menu, X, ShieldAlert, Cpu, Award as AwardIcon, Users, RefreshCw, BarChart2, Radio, CalendarDays, ArrowLeftRight, Trophy, MessageSquare, Briefcase, Globe } from 'lucide-react';
 import { Team } from '../types';
 import { renderLogo } from '../utils';
 // @ts-ignore
@@ -72,6 +72,7 @@ export default function Layout({
     { id: 'draft', label: 'Draft History', icon: CalendarDays },
     { id: 'awards', label: 'Awards', icon: AwardIcon },
     { id: 'championships', label: 'Championships', icon: Trophy },
+    { id: 'franchise-hub', label: 'Franchise Hub', icon: Briefcase },
     { id: 'messaging', label: 'League Chat', icon: MessageSquare },
   ];
 

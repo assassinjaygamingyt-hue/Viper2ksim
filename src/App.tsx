@@ -7,11 +7,12 @@ import React, { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import AdminPanel from './components/AdminPanel';
 import LeagueChat from './components/LeagueChat';
+import FranchiseHub from './components/FranchiseHub';
 import { Team, Player, NewsArticle, PowerRankingEntry, Trade, DraftResult, Award, ChampionshipRecord, TeamHistory, ModUser } from './types';
 import { renderLogo, getTeamColor } from './utils';
 import {
   TrendingUp, Award as AwardIcon, Users, CalendarDays, ArrowLeftRight, Check, AlertTriangle,
-  Flame, Mail, Lock, Sparkles, ChevronRight, BarChart2, Radio, MapPin, Trophy, Shield, Info, Landmark, Globe, Activity, Trash2
+  Flame, Mail, Lock, Sparkles, ChevronRight, BarChart2, Radio, MapPin, Trophy, Shield, Info, Landmark, Globe, Activity, Trash2, UserPlus
 } from 'lucide-react';
 import { championshipsData } from './data/championships';
 import { getTeamHistory } from './data/teamHistories';
@@ -55,6 +56,31 @@ export default function App() {
       editRosters: boolean;
     };
   } | null>(null);
+
+  // Self Registration States
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [regUsername, setRegUsername] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regRole, setRegRole] = useState<'Team Owner' | 'Viewer'>('Team Owner');
+  const [regTeamId, setRegTeamId] = useState('');
+  const [regError, setRegError] = useState('');
+  const [regSuccess, setRegSuccess] = useState('');
+  const [dbSettings, setDbSettings] = useState({ registrationDisabled: false, userCount: 0 });
+
+  // Fetch signup rules settings when opening authorization screen
+  useEffect(() => {
+    if (loginModalOpen) {
+      fetch('/api/settings')
+        .then(res => res.json())
+        .then(data => {
+          setDbSettings({
+            registrationDisabled: !!data.registrationDisabled,
+            userCount: data.userCount || 0
+          });
+        })
+        .catch(err => console.error('Error fetching league registration rules:', err));
+    }
+  }, [loginModalOpen]);
 
   // Standings filter state & Standings sort order
   const [standingsTab, setStandingsTab] = useState<'all' | 'East' | 'West'>('East');
@@ -174,6 +200,45 @@ export default function App() {
           return years.includes(curr) ? curr : maxYear;
         });
       }
+
+      // Live verification of active session accounts
+      const token = localStorage.getItem('viper_admin_token');
+      const savedUser = localStorage.getItem('viper_current_user');
+      if (token && savedUser) {
+        try {
+          const parsedUser = JSON.parse(savedUser);
+          if (parsedUser.role !== 'admin') {
+            const userList = data.users || [];
+            const userStillExists = userList.some((u: any) => u.id === parsedUser.id);
+            if (!userStillExists) {
+              console.warn("User account removed. Expelling from restricted zone.");
+              localStorage.removeItem('viper_admin_token');
+              localStorage.removeItem('viper_current_user');
+              setIsAdminLoggedIn(false);
+              setCurrentUser(null);
+              setActiveTab('home');
+              window.location.hash = '#/';
+              alert("Your account credentials have been removed by the Commissioner. You have lost access immediately.");
+            } else {
+              const updatedObj = userList.find((u: any) => u.id === parsedUser.id);
+              if (updatedObj) {
+                const refreshedUser = {
+                  ...parsedUser,
+                  username: updatedObj.username,
+                  subRole: updatedObj.role || 'Team Owner',
+                  teamId: updatedObj.teamId,
+                  permissions: updatedObj.permissions
+                };
+                setCurrentUser(refreshedUser);
+                localStorage.setItem('viper_current_user', JSON.stringify(refreshedUser));
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
     } catch (err) {
       console.error('Database connection error:', err);
     } finally {
@@ -267,6 +332,58 @@ export default function App() {
       window.location.hash = '#/admin';
     } catch (err: any) {
       setLoginError(err.message || 'Authentication failed.');
+    }
+  };
+
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegError('');
+    setRegSuccess('');
+
+    if (dbSettings.registrationDisabled) {
+      setRegError('Self-registration has been disabled by the Commissioner.');
+      return;
+    }
+    if (dbSettings.userCount >= 40) {
+      setRegError('League accounts limit met (40 max). Registration is locked.');
+      return;
+    }
+
+    try {
+      const payload = {
+        username: regUsername,
+        password: regPassword,
+        role: regRole,
+        teamId: regRole === 'Team Owner' ? regTeamId : ''
+      };
+
+      const resp = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        throw new Error(data.error || 'Failed to complete registration.');
+      }
+
+      setRegSuccess('Account created successfully! Switching to login...');
+      setTimeout(() => {
+        setIsRegisterMode(false);
+        setLoginUsername(regUsername);
+        setAdminPassword(regPassword);
+        // Clean temporary states
+        setRegUsername('');
+        setRegPassword('');
+        setRegTeamId('');
+        setRegSuccess('');
+      }, 1500);
+
+      // Refresh database to sync count
+      fetchDB();
+    } catch (err: any) {
+      setRegError(err.message || 'Error occurred during registration.');
     }
   };
 
@@ -1733,6 +1850,20 @@ export default function App() {
               onOpenLogin={() => setLoginModalOpen(true)}
             />
           )}
+
+          {/* =================================================================== */}
+          {/* 9.6 FRANCHISE HUB TAB */}
+          {/* =================================================================== */}
+          {activeTab === 'franchise-hub' && (
+            <FranchiseHub
+              teams={teams}
+              currentUser={currentUser}
+              isAdminLoggedIn={isAdminLoggedIn}
+              onOpenLogin={() => setLoginModalOpen(true)}
+            />
+          )}
+
+
         </>
       )}
 
@@ -1742,85 +1873,256 @@ export default function App() {
       {loginModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 sm:p-8 w-full max-w-sm relative shadow-2xl animate-fade-in-quick">
-            <h3 className="text-xl font-display font-black text-gray-100 flex items-center gap-2 mb-2 text-amber-500">
-              <Lock className="w-5 h-5 text-red-500" />
-              Administrative Unlock
-            </h3>
-            <p className="text-xs text-gray-400 mb-6 font-mono leading-relaxed">
-              Authenticate via the default simulation access key below to release write controls.
-            </p>
+            
+            {/* TAB TOGGLES */}
+            <div className="flex border-b border-gray-800 mb-6 text-xs font-bold font-mono uppercase">
+              <button
+                type="button"
+                onClick={() => { setIsRegisterMode(false); setLoginError(''); setRegError(''); }}
+                className={`flex-1 pb-3 text-center border-b-2 tracking-wider transition ${!isRegisterMode ? 'text-amber-500 border-amber-500' : 'text-gray-400 border-transparent hover:text-white'}`}
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                onClick={() => { setIsRegisterMode(true); setLoginError(''); setRegError(''); }}
+                className={`flex-1 pb-3 text-center border-b-2 tracking-wider transition relative ${isRegisterMode ? 'text-amber-500 border-amber-500' : 'text-gray-400 border-transparent hover:text-white'}`}
+              >
+                Sign Up
+                {dbSettings.userCount >= 40 && (
+                  <span className="absolute -top-1 right-2 inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                )}
+              </button>
+            </div>
 
-            <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs">
-              <div>
-                <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Requested Session Role (Admin Only)</label>
-                <select
-                  value={selectedAdminRole}
-                  onChange={(e) => setSelectedAdminRole(e.target.value as any)}
-                  className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none transition cursor-pointer font-sans"
-                >
-                  <option value="Commissioner">Commissioner (Full Sovereign Access)</option>
-                  <option value="ESPN/News Outlet">ESPN/News Outlet (Restricted Roster Access)</option>
-                </select>
-              </div>
+            {!isRegisterMode ? (
+              // LOGIN MODE
+              <>
+                <h3 className="text-lg font-display font-black text-gray-100 flex items-center gap-2 mb-1.5 text-amber-500">
+                  <Lock className="w-4 h-4 text-red-500" />
+                  Administrative Unlock
+                </h3>
+                <p className="text-[11px] text-gray-400 mb-5 font-sans leading-relaxed">
+                  Authenticate below to claim write controls. Super administrators and registered league managers enter credentials here.
+                </p>
 
-              <div>
-                <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Username</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Optional for Administrator..."
-                    value={loginUsername}
-                    onChange={(e) => setLoginUsername(e.target.value)}
-                    className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 pl-10 text-white placeholder-gray-600 outline-none transition"
-                  />
-                  <Users className="w-4 h-4 text-gray-600 absolute left-3.5 top-3" />
-                </div>
-              </div>
+                <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Requested Session Role (Admin Only)</label>
+                    <select
+                      value={selectedAdminRole}
+                      onChange={(e) => setSelectedAdminRole(e.target.value as any)}
+                      className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none transition cursor-pointer font-sans"
+                    >
+                      <option value="Commissioner">Commissioner (Full Sovereign Access)</option>
+                      <option value="ESPN/News Outlet">ESPN/News Outlet (Restricted Roster Access)</option>
+                    </select>
+                  </div>
 
-              <div>
-                <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Access Key / Password</label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    required
-                    placeholder="Enter admin password or mod password..."
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                    className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 pl-10 text-white placeholder-gray-600 outline-none transition"
-                  />
-                  <Lock className="w-4 h-4 text-gray-600 absolute left-3.5 top-3" />
-                </div>
-                <div className="mt-2.5 bg-amber-500/5 text-[#f59e0b] border border-amber-500/10 p-2 rounded text-[10px] leading-tight flex items-start gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" />
-                  <span>
-                     Admin password is <span className="font-black text-yellow-300 select-all underline">viper2ksimadmin</span> or <span className="font-black text-yellow-300 font-sans">admin</span>. Mods use their registered username and account password.
-                  </span>
-                </div>
-              </div>
+                  <div>
+                    <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Username</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Enter username (e.g. Viper2ksim)..."
+                        value={loginUsername}
+                        onChange={(e) => setLoginUsername(e.target.value)}
+                        className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 pl-10 text-white placeholder-gray-600 outline-none transition"
+                      />
+                      <Users className="w-4 h-4 text-gray-600 absolute left-3.5 top-3" />
+                    </div>
+                  </div>
 
-              {loginError && (
-                <div className="p-3 bg-red-950/40 border border-red-800/40 text-red-400 text-[11px] rounded flex items-center gap-1.5 leading-tight">
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                  <span>{loginError}</span>
-                </div>
-              )}
+                  <div>
+                    <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Access Key / Password</label>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        required
+                        placeholder="Enter account password..."
+                        value={adminPassword}
+                        onChange={(e) => setAdminPassword(e.target.value)}
+                        className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 pl-10 text-white placeholder-gray-600 outline-none transition"
+                      />
+                      <Lock className="w-4 h-4 text-gray-600 absolute left-3.5 top-3" />
+                    </div>
+                    <div className="mt-2.5 bg-amber-500/5 text-[#f59e0b] border border-amber-500/10 p-2 rounded text-[10px] leading-tight flex items-start gap-1.5 text-left">
+                      <Sparkles className="w-3.5 h-3.5 flex-shrink-0 text-amber-500 mt-0.5" />
+                      <span>
+                         Commissioner Username: <span className="font-black text-yellow-300 select-all underline">Viper2ksim</span> | Password: <span className="font-black text-yellow-300 underline font-sans">admin</span>. All other managers use their custom registered profile credentials.
+                      </span>
+                    </div>
+                  </div>
 
-              <div className="flex gap-2.5 justify-end pt-2">
-                <button
-                  type="button"
-                  onClick={() => { setLoginModalOpen(false); setLoginError(''); setAdminPassword(''); setLoginUsername(''); }}
-                  className="px-4 py-2 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition text-xs font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-gradient-to-r from-amber-400 to-amber-500 text-gray-950 hover:from-amber-500 font-bold rounded-lg transition text-xs uppercase shadow-md cursor-pointer"
-                >
-                  Confirm Key
-                </button>
-              </div>
-            </form>
+                  {loginError && (
+                    <div className="p-3 bg-red-950/40 border border-red-800/40 text-red-400 text-[11px] rounded flex items-center gap-1.5 leading-tight">
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                      <span>{loginError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2.5 justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setLoginModalOpen(false); setLoginError(''); setAdminPassword(''); setLoginUsername(''); }}
+                      className="px-4 py-2 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition text-xs font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-gradient-to-r from-amber-400 to-amber-500 text-gray-950 hover:from-amber-500 font-bold rounded-lg transition text-xs uppercase shadow-md cursor-pointer"
+                    >
+                      Confirm Key
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              // SIGN UP MODE
+              <>
+                <h3 className="text-lg font-display font-black text-gray-100 flex items-center gap-2 mb-1.5 text-amber-500">
+                  <UserPlus className="w-5 h-5 text-emerald-500" />
+                  League Registration
+                </h3>
+                <p className="text-[11px] text-gray-400 mb-5 font-sans leading-relaxed">
+                  Join the simulation league. Created accounts are bounded by the mandatory 40 user capacity standard of the primary federation.
+                </p>
+
+                {dbSettings.registrationDisabled ? (
+                  <div className="p-4 bg-red-950/30 border border-red-900/40 rounded-xl text-center space-y-2 mb-4">
+                    <AlertTriangle className="w-8 h-8 text-red-500 mx-auto" />
+                    <h4 className="font-bold text-gray-200 text-xs">Registration Disabled</h4>
+                    <p className="text-[10px] text-gray-400 leading-normal font-mono text-center">
+                      The Commissioner has closed self-registration pathways. Please contact the front office.
+                    </p>
+                  </div>
+                ) : dbSettings.userCount >= 40 ? (
+                  <div className="p-4 bg-red-950/30 border border-red-900/40 rounded-xl text-center space-y-2 mb-4">
+                    <AlertTriangle className="w-8 h-8 text-red-500 mx-auto animate-pulse" />
+                    <h4 className="font-bold text-gray-200 text-xs text-red-400">Lock: Roster Cap Reached</h4>
+                    <p className="text-[10px] text-gray-400 leading-normal font-mono text-center">
+                      The primary roster index is full ({dbSettings.userCount}/40 active users). Self-registration is automatically locked.
+                    </p>
+                  </div>
+                ) : (
+                  <form onSubmit={handleRegisterSubmit} className="space-y-4 text-xs">
+                    <div>
+                      <span className="block font-mono text-[#10b981] font-bold text-[9px] mb-2 uppercase tracking-wide">
+                        League Cap Stats: {dbSettings.userCount} of 40 Seats Occupied
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">ACCOUNT TYPE</label>
+                      <select
+                        value={regRole}
+                        onChange={(e) => setRegRole(e.target.value as any)}
+                        className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none transition cursor-pointer font-sans"
+                      >
+                        <option value="Team Owner">Team Owner (Participate & Manage Team)</option>
+                        <option value="Viewer">Viewer (Read-Only Portal Access)</option>
+                      </select>
+                    </div>
+
+                    {regRole === 'Team Owner' && (
+                      <div className="bg-amber-950/10 border border-amber-500/10 p-3 rounded-lg space-y-2">
+                        <label className="block text-amber-400 font-bold font-mono text-[9px] uppercase tracking-wide">
+                          SELECT ACTIVE FRANCHISE
+                        </label>
+                        <select
+                          value={regTeamId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRegTeamId(val);
+                            const matchedTeam = teams.find(t => t.id === val);
+                            if (matchedTeam) {
+                              setRegUsername(matchedTeam.name.toLowerCase().replace(/\s+/g, ''));
+                            }
+                          }}
+                          required={regRole === 'Team Owner'}
+                          className="w-full bg-gray-950 border border-amber-500/20 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-sans cursor-pointer"
+                        >
+                          <option value="">-- Choose Roster Team --</option>
+                          {teams.map(t => (
+                            <option key={t.id} value={t.id}>
+                              {t.name} ({t.abbrev})
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[9px] text-gray-400 leading-normal font-mono">
+                          💡 Note: Signing up as Team Owner locks your username to mimic the chosen team's name in Chat rooms!
+                        </p>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">
+                        Username {regRole === 'Team Owner' && regTeamId && '(AUTO-ASSIGNED)'}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          required
+                          disabled={regRole === 'Team Owner' && !!regTeamId}
+                          placeholder={regRole === 'Team Owner' && regTeamId ? 'Set to team name' : 'e.g. suns_loyalist'}
+                          value={regUsername}
+                          onChange={(e) => setRegUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
+                          className={`w-full bg-gray-950 border ${regRole === 'Team Owner' && regTeamId ? 'border-amber-500/20 text-amber-400' : 'border-gray-800 focus:border-emerald-500'} rounded-lg p-2.5 pl-10 text-white outline-none transition`}
+                        />
+                        <Users className="w-4 h-4 text-gray-600 absolute left-3.5 top-3" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs uppercase text-gray-400 mb-1.5 font-bold font-mono">Password</label>
+                      <div className="relative">
+                        <input
+                          type="password"
+                          required
+                          placeholder="Create secure credential password..."
+                          value={regPassword}
+                          onChange={(e) => setRegPassword(e.target.value)}
+                          className="w-full bg-gray-950 border border-gray-800 hover:border-gray-700 focus:border-emerald-500 rounded-lg p-2.5 pl-10 text-white outline-none transition"
+                        />
+                        <Lock className="w-4 h-4 text-gray-600 absolute left-3.5 top-3" />
+                      </div>
+                    </div>
+
+                    {regError && (
+                      <div className="p-3 bg-red-950/40 border border-red-800/40 text-red-400 text-[11px] rounded flex items-center gap-1.5 leading-tight">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                        <span>{regError}</span>
+                      </div>
+                    )}
+
+                    {regSuccess && (
+                      <div className="p-3 bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 text-[11px] rounded flex items-center gap-1.5 leading-tight">
+                        <Sparkles className="w-4 h-4 text-emerald-400 animate-bounce flex-shrink-0" />
+                        <span>{regSuccess}</span>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2.5 justify-end pt-2">
+                      <button
+                        type="button"
+                        onClick={() => { setLoginModalOpen(false); setIsRegisterMode(false); }}
+                        className="px-4 py-2 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition text-xs font-semibold cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-5 py-2 bg-gradient-to-r from-emerald-400 to-emerald-500 text-gray-950 hover:from-emerald-500 font-bold rounded-lg transition text-xs uppercase shadow-md cursor-pointer"
+                      >
+                        Sign Up Now
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </>
+            )}
+
           </div>
         </div>
       )}

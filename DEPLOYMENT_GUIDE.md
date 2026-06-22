@@ -117,9 +117,35 @@ create table awards (
 
 ---
 
-## ☁️ Step 2: Deploying On Replit
+## 🚀 Step 2: Deploying On GitHub Pages (100% Free Hosting)
 
-Replit is an excellent service for hosting this full-stack interactive simulation app. Here is a foolproof guide:
+GitHub Pages is the absolute **best and most recommended** way to host your Viper2kSim league website for **completely free, infinitely**. 
+
+We have engineered a **Smart Offline-First DB Wrapper** that automatically takes over inside GitHub Pages. You get a fully functional interactive Admin Portal, roster tools, draft boards, championships, and trade managers—and everything saves instantly to each user's browser using HTML5 `localStorage` completely client-side! No hosting servers or database fees needed.
+
+### 🌟 Foolproof deployment steps:
+
+1. **Download Code**:
+   * Open the Settings/File Menu in AI Studio in the top corner.
+   * Click **Export Workspace as ZIP** to download a clean offline package of Viper2kSim on your PC.
+   * Extract the ZIP folder anywhere on your computer.
+
+2. **Publish on GitHub**:
+   * Go to [GitHub](https://github.com) and sign up for a free account if you don't have one.
+   * Click **New Repository**. Give it a name (e.g. `viper2ksim-hub`) and set it to **Public**. Leave everything else unticked.
+   * On the repository page, follow the instructions to upload your files. Alternatively, click **"uploading an existing file"** and drag-and-drop all files from your extracted ZIP directory directly in (including the hidden folder `.github/workflows/deploy.yml` or let the automated pipeline do it!).
+   * Commit your files.
+
+3. **Enable GitHub Pages**:
+   * Inside your new GitHub repository, navigate to the **Settings** tab.
+   * Scroll down the left sidebar to the **Pages** menu item.
+   * Under **Build and deployment -> Source**, select **GitHub Actions**. *(That's it! Our preconfigured `.github/workflows/deploy.yml` pipeline will automatically take over!)*
+   * Wait 1–2 minutes. Back in **Settings > Pages**, you will see a green ribbon with your live, secure website link: `https://<your-username>.github.io/<your-repo-name>/`.
+   * **Any changes you push to your GitHub repository in the future will automatically re-build and update your live site within seconds!**
+
+---
+
+## ☁️ Step 3: Deploying on Replit, Render, or fly.io (Optional Full-Stack backend)
 
 1. **Export Code from AI Studio**:
    * Open the Settings/File Menu in AI Studio in the top corner.

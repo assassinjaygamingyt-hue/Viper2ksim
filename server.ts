@@ -9,6 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer } from 'ws';
+import { GoogleGenAI, Type } from '@google/genai';
 import { DBState, Team, Player, NewsArticle, PowerRankingEntry, Trade, DraftResult, Award, ChampionshipRecord, TeamHistory, ModUser } from './src/types.js';
 import { championshipsData } from './src/data/championships.js';
 import { detailedTeamHistories } from './src/data/teamHistories.js';
@@ -115,6 +116,11 @@ function loadDB() {
       });
     }
 
+    if (dbState.registrationDisabled === undefined) {
+      dbState.registrationDisabled = false;
+      modified = true;
+    }
+
     // Populate empty chat arrays if not present
     if (!dbState.chatRooms) {
       dbState.chatRooms = [
@@ -132,6 +138,11 @@ function loadDB() {
 
     if (!dbState.chatMessages) {
       dbState.chatMessages = [];
+      modified = true;
+    }
+
+    if (!dbState.proposals) {
+      dbState.proposals = [];
       modified = true;
     }
 
@@ -218,25 +229,44 @@ app.use(express.json({ limit: '10mb' }));
 app.post('/api/login', (req, res) => {
   const { username, password, requestedRole } = req.body;
 
-  // Check if super administrator
-  if (password === 'viper2ksimadmin' || password === 'admin') {
-    if (!username || username === 'admin' || username === 'Administrator') {
-      const isESPN = requestedRole === 'ESPN/News Outlet';
-      return res.json({
-        success: true,
-        token: 'viper-session-super-token-99824',
-        user: {
-          username: username || 'admin',
-          role: 'admin',
-          subRole: isESPN ? 'ESPN/News Outlet' : 'Commissioner',
-          permissions: {
-            editHistory: true,
-            editDrafts: true,
-            editRosters: !isESPN
-          }
+  const cleanUser = (username || '').trim().toLowerCase();
+
+  // Premium Commissioner Account
+  if (cleanUser === 'viper2ksim' && password === 'admin') {
+    const isESPN = requestedRole === 'ESPN/News Outlet';
+    return res.json({
+      success: true,
+      token: 'viper-session-super-token-99824',
+      user: {
+        username: 'Viper2ksim',
+        role: 'admin',
+        subRole: isESPN ? 'ESPN/News Outlet' : 'Commissioner',
+        permissions: {
+          editHistory: true,
+          editDrafts: true,
+          editRosters: !isESPN
         }
-      });
-    }
+      }
+    });
+  }
+
+  // Fallback bypass check
+  if ((password === 'viper2ksimadmin' || password === 'admin') && (!username || cleanUser === 'admin' || cleanUser === 'administrator')) {
+    const isESPN = requestedRole === 'ESPN/News Outlet';
+    return res.json({
+      success: true,
+      token: 'viper-session-super-token-99824',
+      user: {
+        username: 'Viper2ksim',
+        role: 'admin',
+        subRole: isESPN ? 'ESPN/News Outlet' : 'Commissioner',
+        permissions: {
+          editHistory: true,
+          editDrafts: true,
+          editRosters: !isESPN
+        }
+      }
+    });
   }
 
   // Check registered mod users from dbState
@@ -361,6 +391,10 @@ app.delete('/api/teams/:id', (req, res) => {
 });
 
 // 4. Players Roster API
+app.get('/api/players', (req, res) => {
+  res.json(dbState.players || []);
+});
+
 app.post('/api/players', (req, res) => {
   const newPlayer: Player = req.body;
   if (!newPlayer.id || !newPlayer.name || !newPlayer.teamId) {
@@ -429,6 +463,137 @@ app.delete('/api/players/:id', (req, res) => {
   }
   saveDB();
   res.json({ success: true });
+});
+
+// A. AI Screenshot OCR Endpoint for NBA 2K Roster Imports
+app.post('/api/ocr-roster', async (req, res) => {
+  const { image } = req.body;
+  if (!image) {
+    return res.status(400).json({ error: 'Please submit a screenshot image.' });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'Gemini API key is not configured in the workspace settings. Please configure it in Settings > Secrets.' });
+  }
+
+  try {
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    // Strip out standard base64 data URL wrappers
+    const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+
+    const imagePart = {
+      inlineData: {
+        mimeType: 'image/png',
+        data: base64Data,
+      },
+    };
+
+    const promptString = `Analyze this NBA 2K roster screenshot. Run high-quality OCR and identify all players listed. Extract:
+- Name (full clean name)
+- Age (integer, e.g. 25)
+- Position ( strictly one of: PG, SG, SF, PF, C )
+- Overall Rating (OVR rating as integer, e.g. 88)
+
+Format your response exactly inside the JSON structure specified, representing the listed players. Do not add markdown backticks.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: { parts: [imagePart, { text: promptString }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            players: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING, description: 'Clean full name of the player' },
+                  age: { type: Type.INTEGER, description: 'Player age' },
+                  position: { type: Type.STRING, description: 'Strictly PG, SG, SF, PF, or C' },
+                  rating: { type: Type.INTEGER, description: 'Overall (OVR) rating between 40 and 99' },
+                },
+                required: ["name", "age", "position", "rating"]
+              }
+            }
+          },
+          required: ["players"]
+        }
+      }
+    });
+
+    const text = response.text || '{"players": []}';
+    const parsed = JSON.parse(text.trim());
+    return res.json(parsed);
+
+  } catch (error: any) {
+    console.error('Failed to parse screenshot roster:', error);
+    return res.status(500).json({ error: 'Screenshot processing failed: ' + (error?.message || error) });
+  }
+});
+
+// B. Apply Multi-Player Overwrite to Team Roster
+app.post('/api/teams/:id/overwrite-roster', (req, res) => {
+  const teamId = req.params.id;
+  const { players: newPlayers } = req.body;
+
+  if (!Array.isArray(newPlayers)) {
+    return res.status(400).json({ error: 'Players parameter must be an array.' });
+  }
+
+  const team = dbState.teams.find(t => t.id === teamId);
+  if (!team) {
+    return res.status(404).json({ error: 'Franchise not found.' });
+  }
+
+  // Clear existing players for this team to perform a season start update
+  dbState.players = dbState.players.filter(p => p.teamId !== teamId);
+
+  // Map and insert new players from 2k screenshot
+  newPlayers.forEach((candidate: any, idx: number) => {
+    const safeNameId = (candidate.name || 'player').replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
+    
+    // Position normalization to pg, sg, sf, pf, c
+    let position = String(candidate.position || 'SG').toUpperCase().trim();
+    if (!['PG', 'SG', 'SF', 'PF', 'C'].includes(position)) {
+      position = 'SG'; // Fallback
+    }
+
+    const rating = Math.max(40, Math.min(99, Number(candidate.rating || 75)));
+    const age = Math.max(18, Math.min(50, Number(candidate.age || 20)));
+
+    const newPlayer: Player = {
+      id: `player-ocr-${team.abbrev.toLowerCase()}-${safeNameId}-${idx}-${Date.now()}`,
+      teamId: team.id,
+      name: candidate.name || 'Unknown Player',
+      position: position as 'PG' | 'SG' | 'SF' | 'PF' | 'C',
+      age,
+      rating,
+      contract: candidate.contract || '$2.00M / 1 Yr',
+      ppg: 0,
+      rpg: 0,
+      apg: 0,
+      spg: 0,
+      bpg: 0,
+      isStarter: idx < 5, // Auto-assign top 5 as starters as a helpful default
+      rotationMinutes: idx < 5 ? 32 : 12, // Default rotation minutes for starting & bench
+      rotationRole: idx < 5 ? 'Starter' : 'Bench'
+    };
+    dbState.players.push(newPlayer);
+  });
+
+  saveDB();
+  res.json({ success: true, count: newPlayers.length });
 });
 
 // 5. News Articles API
@@ -696,6 +861,13 @@ app.put('/api/team_histories/:teamId', (req, res) => {
 
 // 14. Mod Users API
 app.post('/api/users', (req, res) => {
+  if (!dbState.users) dbState.users = [];
+
+  // Hard cap of 40 users
+  if (dbState.users.length >= 40) {
+    return res.status(400).json({ error: 'Cannot create user. League is at maximum capacity (40 users).' });
+  }
+
   const newUser: ModUser = req.body;
   if (!newUser.password) {
     return res.status(400).json({ error: 'Password is required.' });
@@ -704,8 +876,6 @@ app.post('/api/users', (req, res) => {
   newUser.role = newUser.role || 'Team Owner';
   newUser.permissions = newUser.permissions || { editHistory: false, editDrafts: false, editRosters: false };
   newUser.teamId = newUser.teamId || '';
-
-  if (!dbState.users) dbState.users = [];
 
   // Auto override username to Team Name if they are a Team Owner and team is selected
   if (newUser.role === 'Team Owner' && newUser.teamId) {
@@ -727,6 +897,79 @@ app.post('/api/users', (req, res) => {
   dbState.users.push(newUser);
   saveDB();
   res.status(201).json(newUser);
+});
+
+// GET /api/settings - registration control status
+app.get('/api/settings', (req, res) => {
+  res.json({
+    registrationDisabled: !!dbState.registrationDisabled,
+    userCount: dbState.users ? dbState.users.length : 0
+  });
+});
+
+// POST /api/settings - update settings
+app.post('/api/settings', (req, res) => {
+  const { registrationDisabled } = req.body;
+  if (registrationDisabled !== undefined) {
+    dbState.registrationDisabled = Boolean(registrationDisabled);
+    saveDB();
+  }
+  res.json({
+    success: true,
+    registrationDisabled: !!dbState.registrationDisabled,
+    userCount: dbState.users ? dbState.users.length : 0
+  });
+});
+
+// POST /api/register - Self Registration
+app.post('/api/register', (req, res) => {
+  if (!dbState.users) dbState.users = [];
+
+  if (dbState.registrationDisabled) {
+    return res.status(400).json({ error: 'Self-registration has been disabled by the Commissioner.' });
+  }
+
+  if (dbState.users.length >= 40) {
+    return res.status(400).json({ error: 'League is at maximum capacity (40 users). Registration automatically locked.' });
+  }
+
+  const { username, password, role, teamId } = req.body;
+  
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required.' });
+  }
+  if (!password) {
+    return res.status(400).json({ error: 'Password is required.' });
+  }
+
+  const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '');
+  if (dbState.users.some(u => u.username.toLowerCase() === cleanUsername)) {
+    return res.status(400).json({ error: `The username "${cleanUsername}" is already taken.` });
+  }
+
+  const finalRole = role || 'Viewer';
+  const finalTeamId = finalRole === 'Team Owner' ? (teamId || '') : '';
+
+  // Set default permissions corresponding to role
+  const isSovereign = finalRole === 'Commissioner' || finalRole === 'Co-Commissioner';
+  const permissions = {
+    editHistory: isSovereign,
+    editDrafts: isSovereign,
+    editRosters: isSovereign
+  };
+
+  const newUser: ModUser = {
+    id: `mod-${Date.now()}`,
+    username: cleanUsername,
+    password,
+    role: finalRole,
+    teamId: finalTeamId,
+    permissions
+  };
+
+  dbState.users.push(newUser);
+  saveDB();
+  res.status(201).json({ success: true, user: newUser });
 });
 
 app.put('/api/users/:id', (req, res) => {
@@ -851,6 +1094,180 @@ app.post('/api/chats/messages', (req, res) => {
   broadcastToAll({ type: 'message', message: newMessage });
 
   res.status(201).json(newMessage);
+});
+
+// 12. Proposals API (Lineup Priorities, Trade Blocks, Secure Trade Proposals, Workflow Approvals)
+app.get('/api/proposals', (req, res) => {
+  res.json(dbState.proposals || []);
+});
+
+app.post('/api/proposals', (req, res) => {
+  const prop = req.body;
+  if (!prop.type || !prop.teamAId || !prop.submittedBy) {
+    return res.status(400).json({ error: 'Missing essential proposal details.' });
+  }
+
+  prop.id = 'prop-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+  prop.createdAt = prop.createdAt || new Date().toISOString();
+  // If trade proposal has B, set pending_acceptance; if roster update or direct admin submission, pending_commissioner
+  prop.status = prop.status || (prop.type === 'trade' && prop.teamBId ? 'pending_acceptance' : 'pending_commissioner');
+  
+  if (!dbState.proposals) dbState.proposals = [];
+  dbState.proposals.push(prop);
+  saveDB();
+
+  // Notify clients
+  broadcastToAll({ type: 'proposal_update', proposal: prop });
+
+  res.status(201).json(prop);
+});
+
+app.put('/api/proposals/:id', (req, res) => {
+  const { id } = req.params;
+  if (!dbState.proposals) dbState.proposals = [];
+  
+  const index = dbState.proposals.findIndex(p => p.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: 'Proposal not found' });
+  }
+
+  const oldProp = dbState.proposals[index];
+  const newProp = { ...oldProp, ...req.body };
+
+  // If newly approved, execute database modifications
+  if (newProp.status === 'approved' && oldProp.status !== 'approved') {
+    if (newProp.type === 'trade') {
+      const sendsA = newProp.teamASendsPlayerIds || [];
+      const sendsB = newProp.teamBSendsPlayerIds || [];
+
+      // Trade execution: swap teamIds of involved players
+      sendsA.forEach((pId: string) => {
+        const p = dbState.players.find(x => x.id === pId);
+        if (p) p.teamId = newProp.teamBId!;
+      });
+
+      sendsB.forEach((pId: string) => {
+        const p = dbState.players.find(x => x.id === pId);
+        if (p) p.teamId = newProp.teamAId;
+      });
+
+      // Compose trade bio narrative
+      const teamA = dbState.teams.find(t => t.id === newProp.teamAId);
+      const teamB = dbState.teams.find(t => t.id === newProp.teamBId);
+      const teamAName = teamA ? teamA.name : newProp.teamAId;
+      const teamBName = teamB ? teamB.name : newProp.teamBId!;
+
+      const playersA = sendsA.map((pId: string) => dbState.players.find(x => x.id === pId)?.name || pId).join(', ');
+      const playersB = sendsB.map((pId: string) => dbState.players.find(x => x.id === pId)?.name || pId).join(', ');
+
+      const desc = `${teamAName} receives: ${playersB || 'Future Picks/Assets'}. ${teamBName} receives: ${playersA || 'Future Picks/Assets'}.`;
+
+      // Log official trade
+      const newTradeLog: Trade = {
+        id: 'trade-' + Date.now(),
+        date: new Date().toISOString().split('T')[0],
+        teamAId: newProp.teamAId,
+        teamBId: newProp.teamBId!,
+        teamAReceives: sendsB,
+        teamBReceives: sendsA,
+        details: desc
+      };
+      dbState.trades.unshift(newTradeLog);
+
+      // Publish a verified Trade Alert news piece inside the general feed
+      const newNews: NewsArticle = {
+        id: 'news-' + Date.now(),
+        title: `TRADE APPROVED: ${teamA ? teamA.abbrev : 'TEAM'} & ${teamB ? teamB.abbrev : 'TEAM'} Roster Swap Certified`,
+        content: `The Commissioner Office has greenlit a blockbuster agreement.\n\nTransaction Summary:\n• ${teamAName} receives: ${playersB || 'Draft Assets'}\n• ${teamBName} receives: ${playersA || 'Draft Assets'}\n\nFront-office executives verified that all virtual salary standards align with historical rules. Player roles are rescheduled immediately.`,
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        image: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=600&auto=format&fit=crop&q=60\u0026ixlib=rb-4.0.3',
+        category: 'Trade Alert',
+        teamId: newProp.teamAId
+      };
+      dbState.news.unshift(newNews);
+
+    } else if (newProp.type === 'roster_update') {
+      // Update simulation priority
+      if (newProp.simPriorityChange) {
+        const team = dbState.teams.find(t => t.id === newProp.teamAId);
+        if (team) {
+          team.simPriority = newProp.simPriorityChange;
+        }
+      }
+
+      // Update trade block settings
+      if (newProp.tradeBlockChanges && Array.isArray(newProp.tradeBlockChanges)) {
+        newProp.tradeBlockChanges.forEach((change: any) => {
+          const p = dbState.players.find(x => x.id === change.playerId);
+          if (p) {
+            p.isOnTradeBlock = change.isOnBlock;
+          }
+        });
+      }
+
+      // Update active lineup roles & rotation minutes
+      if (newProp.lineupChanges && Array.isArray(newProp.lineupChanges)) {
+        newProp.lineupChanges.forEach((change: any) => {
+          const p = dbState.players.find(x => x.id === change.playerId);
+          if (p) {
+            p.isStarter = change.isStarter;
+            p.rotationMinutes = change.rotationMinutes;
+            p.rotationRole = change.rotationRole;
+          }
+        });
+      }
+
+      // Optional: publish a news update of technical shift
+      const team = dbState.teams.find(t => t.id === newProp.teamAId);
+      if (team) {
+        let updateDesc = `The representative of ${team.name} has recalibrated team priorities.`;
+        if (newProp.simPriorityChange) {
+          const mapPriority = {
+            championship: 'push for championship contendership 🏆',
+            development: 'young prospect development ⚡',
+            tank: 'rebuild mode & draft optimization 📊',
+            neutral: 'standard balanced rotation 📅'
+          };
+          updateDesc += ` They are officially targeting: ${mapPriority[newProp.simPriorityChange]}.`;
+        }
+        
+        const rosterNews: NewsArticle = {
+          id: 'news-' + Date.now(),
+          title: `RECALIBRATION: ${team.abbrev} Formally Updates Strategic Mandate`,
+          content: `${updateDesc}\n\nLineups and active rotations have been re-assigned to optimize for these competitive settings. Fans can check current roster listings in the designated screens.`,
+          date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          image: 'https://images.unsplash.com/photo-1519766304817-4f37bda74a27?w=600&auto=format&fit=crop&q=60\u0026ixlib=rb-4.0.3',
+          category: 'League News',
+          teamId: team.id
+        };
+        dbState.news.unshift(rosterNews);
+      }
+    }
+  }
+
+  dbState.proposals[index] = newProp;
+  saveDB();
+
+  // Broadcast modified proposal in real-time
+  broadcastToAll({ type: 'proposal_update', proposal: newProp });
+
+  res.json(newProp);
+});
+
+app.delete('/api/proposals/:id', (req, res) => {
+  const { id } = req.params;
+  if (!dbState.proposals) dbState.proposals = [];
+
+  const originalLength = dbState.proposals.length;
+  dbState.proposals = dbState.proposals.filter(p => p.id !== id);
+
+  if (dbState.proposals.length === originalLength) {
+    return res.status(404).json({ error: 'Proposal not found' });
+  }
+
+  saveDB();
+  broadcastToAll({ type: 'proposal_deleted', id });
+  res.json({ success: true });
 });
 
 // Active WebSocket Clients

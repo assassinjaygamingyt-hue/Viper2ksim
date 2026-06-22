@@ -18,6 +18,7 @@ export interface Team {
   ptsAgainst: number;
   retiredJerseys?: string; // e.g. "8, 24, 32"
   gmInstagram?: string; // e.g. "@jacobm"
+  simPriority?: 'championship' | 'development' | 'tank' | 'neutral';
 }
 
 export interface Player {
@@ -36,6 +37,10 @@ export interface Player {
   isHOF?: boolean;
   isRetired?: boolean;
   careerAwards?: string[]; // e.g. ["2003-04 NBA MVP", "3x NBA Champion"]
+  isOnTradeBlock?: boolean;
+  rotationMinutes?: number;
+  isStarter?: boolean;
+  rotationRole?: 'Star' | 'Starter' | '6th Man' | 'Bench' | 'Prospect';
 }
 
 export interface NewsArticle {
@@ -99,6 +104,8 @@ export interface DBState {
   users?: ModUser[];
   chatRooms?: ChatRoom[];
   chatMessages?: ChatMessage[];
+  proposals?: Proposal[];
+  registrationDisabled?: boolean;
 }
 
 export interface ChampionshipRecord {
@@ -152,4 +159,25 @@ export interface ChatMessage {
   senderColor?: string;
   content: string;
   timestamp: string;
+}
+
+export interface Proposal {
+  id: string;
+  type: 'trade' | 'roster_update';
+  status: 'pending_acceptance' | 'pending_commissioner' | 'approved' | 'rejected';
+  teamAId: string;
+  teamBId?: string;
+  
+  // Trade details
+  teamASendsPlayerIds?: string[];
+  teamBSendsPlayerIds?: string[];
+  message?: string;
+  
+  // Roster details
+  simPriorityChange?: 'championship' | 'development' | 'tank' | 'neutral';
+  tradeBlockChanges?: { playerId: string; isOnBlock: boolean }[];
+  lineupChanges?: { playerId: string; isStarter: boolean; rotationMinutes: number; rotationRole: string }[];
+  
+  submittedBy: string;
+  createdAt: string;
 }

@@ -141,6 +141,38 @@ export default function AdminPanel({
     editRosters: false
   });
 
+  // League registration control states
+  const [registrationDisabled, setRegistrationDisabled] = useState(false);
+  const [userCount, setUserCount] = useState(0);
+
+  // Sync settings whenever users list updates
+  React.useEffect(() => {
+    fetch('/api/settings')
+      .then(res => res.json())
+      .then(data => {
+        setRegistrationDisabled(!!data.registrationDisabled);
+        setUserCount(data.userCount || 0);
+      })
+      .catch(err => console.error('Error syncing user controls:', err));
+  }, [users]);
+
+  const handleToggleRegistration = async () => {
+    try {
+      const resp = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrationDisabled: !registrationDisabled })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to update settings');
+      setRegistrationDisabled(!!data.registrationDisabled);
+      setUserCount(data.userCount || 0);
+      showAlert(`League guest account self-registration ${data.registrationDisabled ? 'DISABLED' : 'ENABLED'} successfully!`, 'success');
+    } catch (err: any) {
+      showAlert(err.message || 'Error updating settings', 'error');
+    }
+  };
+
 
   // ---------------------------------------------------------------------------
   // TEAMS HANDLERS
@@ -2682,6 +2714,75 @@ export default function AdminPanel({
         {/* =================================================================== */}
         {activeTab === 'users' && currentUser?.role === 'admin' && (
           <div className="space-y-10 font-sans">
+            
+            {/* COMMISSIONER REGISTRATION SETTINGS BOARD */}
+            <div className="bg-gray-950/45 border border-gray-800/80 p-6 rounded-3xl space-y-4">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <h4 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-emerald-500 animate-pulse" />
+                    League Attendance & Registration Control Panel
+                  </h4>
+                  <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
+                    Set policy for guest self-registration. When locked or full, guest self-registration forms are closed instantly. Hard limit of 40 users maximum.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3 items-center">
+                  <span className={`px-3 py-1.5 rounded-full text-[10px] font-bold font-mono tracking-wider border uppercase ${
+                    registrationDisabled 
+                      ? 'bg-red-500/10 text-red-500 border-red-500/20' 
+                      : userCount >= 40 
+                        ? 'bg-red-500/10 text-red-500 border-red-500/20 animate-pulse'
+                        : 'bg-emerald-500/10 text-[#10b981] border-emerald-500/20'
+                  }`}>
+                    {registrationDisabled 
+                      ? '🔴 Disabled' 
+                      : userCount >= 40 
+                        ? '🚫 Locked (Roster Cap)' 
+                        : '🟢 Open For Signups'}
+                  </span>
+                  
+                  <button
+                    onClick={handleToggleRegistration}
+                    className={`px-4 py-2 text-xs font-bold rounded-xl transition shadow-md cursor-pointer text-center ${
+                      registrationDisabled
+                        ? 'bg-emerald-500 hover:bg-emerald-600 text-gray-950'
+                        : 'bg-red-500 hover:bg-red-650 text-white'
+                    }`}
+                  >
+                    {registrationDisabled ? 'Enable Guest Signups' : 'Disable Guest Signups'}
+                  </button>
+                </div>
+              </div>
+
+              {/* PROGRESS BAR FOR 40 LEAGUE ACCOUNTS */}
+              <div className="bg-gray-900/60 p-4 rounded-2xl border border-gray-850 space-y-2">
+                <div className="flex justify-between items-center text-[10px] font-mono font-bold uppercase">
+                  <span className="text-gray-400">Roster Capacity Index ({userCount} / 40 Users Allowed)</span>
+                  <span className={userCount >= 40 ? 'text-red-400 animate-pulse font-bold' : 'text-emerald-400'}>
+                    {userCount >= 40 ? 'CAPACITY DETECTED' : `${40 - userCount} Seats Remaining`}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-950 rounded-full h-2.5 overflow-hidden">
+                  <div 
+                    className={`h-2.5 rounded-full transition-all duration-500 ${
+                      userCount >= 40 
+                        ? 'bg-red-500' 
+                        : userCount >= 32 
+                          ? 'bg-amber-500' 
+                          : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, (userCount / 40) * 100)}%` }}
+                  ></div>
+                </div>
+                {userCount >= 40 && (
+                  <p className="text-[10px] text-red-400 font-mono leading-tight pt-1">
+                    ⚠️ The league is at maximum capacity. Handshakes and registration queries are locked automatically. Remove users or reset capacities to onboard new managers.
+                  </p>
+                )}
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
               {/* Left Column: Create Mod User */}
               <div className="lg:col-span-5 bg-gray-950/50 p-6 rounded-2xl border border-gray-800">
@@ -2697,24 +2798,30 @@ export default function AdminPanel({
 
                 <form onSubmit={editingModId ? handleUpdateModUser : handleAddModUser} className="space-y-4 text-xs">
                   <div>
-                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">MODERATOR ROLE</label>
+                    <label className="block text-gray-400 mb-1 font-bold font-mono text-[10px] uppercase">LEAGUE USER ROLE</label>
                     <select
                       value={modForm.role}
                       onChange={(e) => {
                         const newRole = e.target.value;
+                        const isSovereign = newRole === 'Commissioner' || newRole === 'Co-Commissioner';
                         setModForm({
                           ...modForm,
                           role: newRole,
                           // Clear teamId if not Team Owner
                           teamId: newRole === 'Team Owner' ? modForm.teamId : '',
-                          username: newRole === 'Team Owner' && modForm.teamId ? (teams.find(t => t.id === modForm.teamId)?.name || modForm.username) : modForm.username
+                          username: newRole === 'Team Owner' && modForm.teamId ? (teams.find(t => t.id === modForm.teamId)?.name.toLowerCase().replace(/\s+/g, '') || modForm.username) : modForm.username,
+                          editHistory: isSovereign,
+                          editDrafts: isSovereign,
+                          editRosters: isSovereign
                         });
                       }}
                       className="w-full bg-gray-900 border border-gray-800 focus:border-amber-500 rounded-lg p-2.5 text-white outline-none font-sans cursor-pointer"
                     >
-                      <option value="Team Owner">Team Owner</option>
-                      <option value="League Moderator">League Moderator</option>
-                      <option value="ESPN/News Outlet">ESPN/News Outlet</option>
+                      <option value="Commissioner">Commissioner (Full Access)</option>
+                      <option value="Co-Commissioner">Co-Commissioner (Manage League Content)</option>
+                      <option value="Moderator">Moderator (Manage Chat & News)</option>
+                      <option value="Team Owner">Team Owner (Access Own Team)</option>
+                      <option value="Viewer">Viewer (Read Only Access)</option>
                     </select>
                   </div>
 
@@ -2731,7 +2838,7 @@ export default function AdminPanel({
                           setModForm({
                             ...modForm,
                             teamId: val,
-                            username: matchedTeam ? matchedTeam.name : ''
+                            username: matchedTeam ? matchedTeam.name.toLowerCase().replace(/\s+/g, '') : ''
                           });
                         }}
                         required={modForm.role === 'Team Owner'}
